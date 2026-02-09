@@ -1095,6 +1095,7 @@ class ColorAnalysisGUIWithSensor:
         if hasattr(self, 'sensor') and self.sensor.is_connected():
             self.sensor.disconnect()
 
+
 # ============================================================================
 # Main
 # ============================================================================

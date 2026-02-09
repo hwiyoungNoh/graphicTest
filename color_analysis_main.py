@@ -1,6 +1,6 @@
 """
-Display Color Calibration & Analysis System with Sensor Module
-센서 모듈을 사용하는 메인 GUI
+Display Color Calibration & Analysis System with Sensor Module (Optimized)
+슬라이더 성능 최적화 버전
 """
 
 import numpy as np
@@ -14,6 +14,7 @@ from typing import Tuple, Dict, List, Optional
 from enum import Enum
 import sys
 from tkinter import Tk, filedialog
+import time
 
 # 센서 모듈 import
 from sensor_module import VirtualSensor, SensorReading
@@ -23,6 +24,27 @@ if sys.platform == 'win32':
         sys.stdout.reconfigure(encoding='utf-8')
     except:
         pass
+
+# ============================================================================
+# Performance Monitor (디버깅용)
+# ============================================================================
+
+class PerformanceMonitor:
+    """성능 모니터링 클래스"""
+
+    def __init__(self, enabled=False):
+        self.enabled = enabled
+        self.timings = {}
+
+    def start(self, name):
+        if self.enabled:
+            self.timings[name] = time.time()
+
+    def end(self, name):
+        if self.enabled and name in self.timings:
+            elapsed = (time.time() - self.timings[name]) * 1000
+            print("[PERF] {}: {:.2f}ms".format(name, elapsed))
+            del self.timings[name]
 
 # ============================================================================
 # Color Space Standards
@@ -235,6 +257,7 @@ class ColorAnalyzerAdvanced:
             'roll_off': roll_off
         }
 
+
 # ============================================================================
 # Image Viewer
 # ============================================================================
@@ -252,7 +275,7 @@ class ImageViewerWindow:
         self.image = image
 
         if self.fig is None:
-            self.fig = plt.figure(figsize=(12, 8))
+            self.fig = plt.figure(figsize=(20, 12))
             self.fig.canvas.manager.set_window_title('Image Viewer - Click to Pick Color')
             self.ax = self.fig.add_subplot(111)
             self.ax.set_title('Click on any pixel to pick its color', fontsize=12, fontweight='bold')
@@ -308,12 +331,14 @@ class ImageViewerWindow:
                 self.callback(r, g, b)
 
 # ============================================================================
-# GUI with Sensor Module
+# GUI with Sensor Module (OPTIMIZED)
 # ============================================================================
 
 class ColorAnalysisGUI:
 
-    def __init__(self):
+    def __init__(self, enable_perf_monitor=False):
+        self.perf = PerformanceMonitor(enabled=enable_perf_monitor)
+
         self.current_gamma = GammaType.SDR_22
         self.current_standard = ColorStandard.BT709
 
@@ -328,22 +353,175 @@ class ColorAnalysisGUI:
         self.analyzer = ColorAnalyzerAdvanced()
         self.image_viewer = ImageViewerWindow(self.on_pixel_picked)
 
-        # 센서 초기화 (sensor_module.py에서 import)
+        # 센서 초기화
         self.sensor = VirtualSensor(noise_level=0.02)
         self.sensor.connect()
         self.last_sensor_reading = None
 
+        # 최적화 플래그
         self.updating = False
+        self.slider_dragging = False  # 슬라이더 드래그 중인지 확인
+        self.pending_update = False   # 대기 중인 업데이트가 있는지
+
+        # 캐시된 그래픽 요소
         self.chromaticity_current_point = None
         self.chromaticity_sensor_point = None
+        self.eotf_curve_cache = {}
+
+        # EOTF 곡선 캐시용 signal 배열 (미리 계산)
+        self.eotf_signal = np.linspace(0, 1, 400)
 
         self.setup_gui()
+        self.setup_slider_mouse_events()  # 마우스 이벤트 설정
         self.update_analysis()
+
+        print("[OPTIMIZATION] Mouse release update mode enabled")
+        print("[OPTIMIZATION] Press 'p' to toggle performance monitor")
+
+    def setup_slider_mouse_events(self):
+        """슬라이더에 마우스 릴리즈 이벤트 추가"""
+        # RGB 슬라이더
+        self.slider_r.on_changed(self.on_slider_change_quick)
+        self.slider_g.on_changed(self.on_slider_change_quick)
+        self.slider_b.on_changed(self.on_slider_change_quick)
+
+        # Brightness 슬라이더
+        self.slider_brightness.on_changed(self.on_brightness_change_quick)
+
+        # Max Brightness 슬라이더
+        self.slider_max_brightness.on_changed(self.on_max_brightness_change_quick)
+
+        # HDR 슬라이더
+        self.slider_max_cll.on_changed(self.on_hdr_param_change_quick)
+        self.slider_display_peak.on_changed(self.on_hdr_param_change_quick)
+        self.slider_roll_off.on_changed(self.on_hdr_param_change_quick)
+
+        # 마우스 릴리즈 이벤트 연결
+        self.fig.canvas.mpl_connect('button_release_event', self.on_mouse_release)
+        self.fig.canvas.mpl_connect('button_press_event', self.on_mouse_press)
+
+        # 키보드 이벤트 (성능 모니터 토글용)
+        self.fig.canvas.mpl_connect('key_press_event', self.on_key_press)
+
+    def on_mouse_press(self, event):
+        """마우스 버튼 눌림"""
+        self.slider_dragging = True
+
+    def on_mouse_release(self, event):
+        """마우스 버튼 릴리즈 - 최종 업데이트 수행"""
+        if self.slider_dragging and self.pending_update:
+            self.slider_dragging = False
+            self.pending_update = False
+            self.perf.start("full_update")
+            self.update_analysis()
+            self.perf.end("full_update")
+
+    def on_key_press(self, event):
+        """키보드 이벤트 - 'p' 키로 성능 모니터 토글"""
+        if event.key == 'p':
+            self.perf.enabled = not self.perf.enabled
+            status = "enabled" if self.perf.enabled else "disabled"
+            print("[PERF] Performance monitor {}".format(status))
+
+    def on_slider_change_quick(self, val):
+        """빠른 슬라이더 변경 (실시간 색상 업데이트만)"""
+        if self.updating:
+            return
+
+        self.updating = True
+        self.rgb_ratio = np.array([self.slider_r.val, self.slider_g.val, self.slider_b.val])
+
+        # 텍스트 박스 업데이트
+        self.text_r.set_val('{:.3f}'.format(self.slider_r.val))
+        self.text_g.set_val('{:.3f}'.format(self.slider_g.val))
+        self.text_b.set_val('{:.3f}'.format(self.slider_b.val))
+
+        # 색상 샘플만 빠르게 업데이트
+        if self.slider_dragging:
+            self.pending_update = True
+            self.update_color_sample_only()
+        else:
+            # 마우스 릴리즈 후 또는 키보드 입력 시 전체 업데이트
+            self.update_analysis()
+
+        self.updating = False
+
+    def on_brightness_change_quick(self, val):
+        """빠른 밝기 변경"""
+        if self.updating:
+            return
+
+        self.updating = True
+        self.brightness = val
+        self.text_brightness.set_val('{:.3f}'.format(val))
+
+        if self.slider_dragging:
+            self.pending_update = True
+            self.update_color_sample_only()
+        else:
+            self.update_analysis()
+
+        self.updating = False
+
+    def on_max_brightness_change_quick(self, val):
+        """빠른 최대 밝기 변경"""
+        if self.updating:
+            return
+
+        self.updating = True
+        self.max_brightness = val
+        self.text_max_brightness.set_val('{}'.format(int(val)))
+
+        if self.slider_dragging:
+            self.pending_update = True
+        else:
+            self.update_analysis()
+
+        self.updating = False
+
+    def on_hdr_param_change_quick(self, val):
+        """빠른 HDR 파라미터 변경"""
+        if self.updating:
+            return
+
+        self.updating = True
+        self.max_cll = self.slider_max_cll.val
+        self.display_peak = self.slider_display_peak.val
+        self.roll_off = self.slider_roll_off.val
+
+        self.text_max_cll.set_val('{}'.format(int(self.max_cll)))
+        self.text_display_peak.set_val('{}'.format(int(self.display_peak)))
+        self.text_roll_off.set_val('{:.2f}'.format(self.roll_off))
+
+        if self.slider_dragging:
+            self.pending_update = True
+        else:
+            self.update_analysis()
+
+        self.updating = False
+
+    def update_color_sample_only(self):
+        """색상 샘플만 빠르게 업데이트 (드래그 중)"""
+        rgb_final = self.rgb_ratio * self.brightness
+        rgb_final = np.clip(rgb_final, 0, 1)
+
+        self.ax_sample.clear()
+        self.ax_sample.set_title('Color Sample', fontsize=12, fontweight='bold', pad=8)
+        self.ax_sample.axis('off')
+
+        rect = Rectangle((0.1, 0.1), 0.8, 0.8,
+                        facecolor=rgb_final,
+                        edgecolor='black', linewidth=3,
+                        transform=self.ax_sample.transAxes)
+        self.ax_sample.add_patch(rect)
+
+        # 빠른 redraw
+        self.fig.canvas.draw_idle()
 
     def setup_gui(self):
         self.fig = plt.figure(figsize=(20, 11))
-        self.fig.canvas.manager.set_window_title('Color Calibration & Analysis System with Sensor')
-        self.fig.suptitle('Display Color Calibration & Analysis System - ST.2084 PQ (with Sensor)', 
+        self.fig.canvas.manager.set_window_title('Color Calibration & Analysis System (Optimized)')
+        self.fig.suptitle('Display Color Calibration & Analysis System - ST.2084 PQ (Optimized)', 
                          fontsize=14, fontweight='bold', y=0.98)
 
         gs_main = gridspec.GridSpec(2, 3, figure=self.fig,
@@ -394,7 +572,6 @@ class ColorAnalysisGUI:
 
     def setup_sensor_controls(self):
         """센서 제어 버튼"""
-        # Read Sensor 버튼
         ax_read = plt.axes([0.32, 0.03, 0.12, 0.04])
         self.btn_read_sensor = Button(ax_read, 'Read Sensor', 
                                       color='lightgreen', hovercolor='limegreen')
@@ -402,7 +579,6 @@ class ColorAnalysisGUI:
         self.btn_read_sensor.label.set_weight('bold')
         self.btn_read_sensor.on_clicked(self.on_read_sensor)
 
-        # Sensor Status 표시
         ax_sensor_status = plt.axes([0.01, 0.38, 0.11, 0.06])
         ax_sensor_status.axis('off')
         ax_sensor_status.set_title('Sensor Status', fontsize=11, fontweight='bold', pad=8)
@@ -422,7 +598,6 @@ class ColorAnalysisGUI:
         print("SENSOR MEASUREMENT")
         print("="*60)
 
-        # 센서 읽기 (완전히 랜덤한 RGB)
         reading = self.sensor.read()
 
         if not reading.is_valid:
@@ -431,7 +606,6 @@ class ColorAnalysisGUI:
 
         self.last_sensor_reading = reading
 
-        # 측정 결과 출력
         print("\nMeasurement Results:")
         print("  RGB: R={:.4f}, G={:.4f}, B={:.4f}".format(
             reading.rgb[0], reading.rgb[1], reading.rgb[2]))
@@ -441,17 +615,13 @@ class ColorAnalysisGUI:
         print("  Timestamp: {:.3f}".format(reading.timestamp))
         print("="*60 + "\n")
 
-        # 측정된 RGB 값을 슬라이더에 적용
         self.apply_sensor_reading_to_sliders(reading)
-
-        # Analysis Results에 센서 측정 결과 표시
         self.update_analysis()
 
     def apply_sensor_reading_to_sliders(self, reading: SensorReading):
         """센서 측정 결과를 슬라이더에 적용"""
         self.updating = True
 
-        # 가장 밝은 채널로 정규화
         max_val = max(reading.rgb)
         if max_val > 0:
             normalized_rgb = reading.rgb / max_val
@@ -460,30 +630,25 @@ class ColorAnalysisGUI:
             normalized_rgb = reading.rgb
             brightness = 1.0
 
-        # 슬라이더 업데이트
         self.slider_r.set_val(normalized_rgb[0])
         self.slider_g.set_val(normalized_rgb[1])
         self.slider_b.set_val(normalized_rgb[2])
         self.slider_brightness.set_val(brightness)
 
-        # 텍스트 박스 업데이트
         self.text_r.set_val('{:.3f}'.format(normalized_rgb[0]))
         self.text_g.set_val('{:.3f}'.format(normalized_rgb[1]))
         self.text_b.set_val('{:.3f}'.format(normalized_rgb[2]))
         self.text_brightness.set_val('{:.3f}'.format(brightness))
 
-        # 내부 상태 업데이트
         self.rgb_ratio = normalized_rgb
         self.brightness = brightness
 
         self.updating = False
-
         print("[GUI] Applied sensor reading to sliders")
 
     def setup_rgb_sliders(self):
         ax_r = plt.axes([0.15, 0.36, 0.28, 0.015])
         self.slider_r = Slider(ax_r, 'R', 0.0, 1.0, valinit=1.0, color='red', valstep=0.001)
-        self.slider_r.on_changed(self.on_slider_change)
 
         ax_r_text = plt.axes([0.44, 0.357, 0.035, 0.022])
         self.text_r = TextBox(ax_r_text, '', initial='1.000', color='white')
@@ -491,7 +656,6 @@ class ColorAnalysisGUI:
 
         ax_g = plt.axes([0.15, 0.32, 0.28, 0.015])
         self.slider_g = Slider(ax_g, 'G', 0.0, 1.0, valinit=0.0, color='green', valstep=0.001)
-        self.slider_g.on_changed(self.on_slider_change)
 
         ax_g_text = plt.axes([0.44, 0.317, 0.035, 0.022])
         self.text_g = TextBox(ax_g_text, '', initial='0.000', color='white')
@@ -499,7 +663,6 @@ class ColorAnalysisGUI:
 
         ax_b = plt.axes([0.15, 0.28, 0.28, 0.015])
         self.slider_b = Slider(ax_b, 'B', 0.0, 1.0, valinit=0.0, color='blue', valstep=0.001)
-        self.slider_b.on_changed(self.on_slider_change)
 
         ax_b_text = plt.axes([0.44, 0.277, 0.035, 0.022])
         self.text_b = TextBox(ax_b_text, '', initial='0.000', color='white')
@@ -508,7 +671,6 @@ class ColorAnalysisGUI:
     def setup_brightness_slider(self):
         ax_bright = plt.axes([0.15, 0.22, 0.28, 0.015])
         self.slider_brightness = Slider(ax_bright, 'Bright', 0.0, 1.0, valinit=1.0, color='gray', valstep=0.001)
-        self.slider_brightness.on_changed(self.on_brightness_change)
 
         ax_bright_text = plt.axes([0.44, 0.217, 0.035, 0.022])
         self.text_brightness = TextBox(ax_bright_text, '', initial='1.000', color='white')
@@ -517,7 +679,6 @@ class ColorAnalysisGUI:
     def setup_max_brightness_slider(self):
         ax_max = plt.axes([0.15, 0.16, 0.28, 0.015])
         self.slider_max_brightness = Slider(ax_max, 'Max(cd/m2)', 1.0, 1000.0, valinit=100.0, color='orange', valstep=1.0)
-        self.slider_max_brightness.on_changed(self.on_max_brightness_change)
 
         ax_max_text = plt.axes([0.44, 0.157, 0.035, 0.022])
         self.text_max_brightness = TextBox(ax_max_text, '', initial='100', color='white')
@@ -526,7 +687,6 @@ class ColorAnalysisGUI:
     def setup_hdr_sliders(self):
         ax_maxcll = plt.axes([0.55, 0.36, 0.28, 0.015])
         self.slider_max_cll = Slider(ax_maxcll, 'MaxCLL(nits)', 100.0, 10000.0, valinit=4000.0, color='purple', valstep=100.0)
-        self.slider_max_cll.on_changed(self.on_hdr_param_change)
 
         ax_maxcll_text = plt.axes([0.84, 0.357, 0.035, 0.022])
         self.text_max_cll = TextBox(ax_maxcll_text, '', initial='4000', color='white')
@@ -534,7 +694,6 @@ class ColorAnalysisGUI:
 
         ax_peak = plt.axes([0.55, 0.32, 0.28, 0.015])
         self.slider_display_peak = Slider(ax_peak, 'DispPeak(nits)', 100.0, 10000.0, valinit=1000.0, color='cyan', valstep=100.0)
-        self.slider_display_peak.on_changed(self.on_hdr_param_change)
 
         ax_peak_text = plt.axes([0.84, 0.317, 0.035, 0.022])
         self.text_display_peak = TextBox(ax_peak_text, '', initial='1000', color='white')
@@ -542,7 +701,6 @@ class ColorAnalysisGUI:
 
         ax_rolloff = plt.axes([0.55, 0.28, 0.28, 0.015])
         self.slider_roll_off = Slider(ax_rolloff, 'Roll-Off', 0.0, 1.0, valinit=0.5, color='magenta', valstep=0.01)
-        self.slider_roll_off.on_changed(self.on_hdr_param_change)
 
         ax_rolloff_text = plt.axes([0.84, 0.277, 0.035, 0.022])
         self.text_roll_off = TextBox(ax_rolloff_text, '', initial='0.50', color='white')
@@ -600,17 +758,6 @@ class ColorAnalysisGUI:
         self.updating = False
         self.update_analysis()
 
-    def on_slider_change(self, val):
-        if self.updating:
-            return
-        self.updating = True
-        self.rgb_ratio = np.array([self.slider_r.val, self.slider_g.val, self.slider_b.val])
-        self.text_r.set_val('{:.3f}'.format(self.slider_r.val))
-        self.text_g.set_val('{:.3f}'.format(self.slider_g.val))
-        self.text_b.set_val('{:.3f}'.format(self.slider_b.val))
-        self.update_analysis()
-        self.updating = False
-
     def on_text_change(self, text):
         if self.updating:
             return
@@ -628,15 +775,6 @@ class ColorAnalysisGUI:
             pass
         self.updating = False
 
-    def on_brightness_change(self, val):
-        if self.updating:
-            return
-        self.updating = True
-        self.brightness = val
-        self.text_brightness.set_val('{:.3f}'.format(val))
-        self.update_analysis()
-        self.updating = False
-
     def on_brightness_text_change(self, text):
         if self.updating:
             return
@@ -650,15 +788,6 @@ class ColorAnalysisGUI:
             pass
         self.updating = False
 
-    def on_max_brightness_change(self, val):
-        if self.updating:
-            return
-        self.updating = True
-        self.max_brightness = val
-        self.text_max_brightness.set_val('{}'.format(int(val)))
-        self.update_analysis()
-        self.updating = False
-
     def on_max_brightness_text_change(self, text):
         if self.updating:
             return
@@ -670,19 +799,6 @@ class ColorAnalysisGUI:
             self.update_analysis()
         except:
             pass
-        self.updating = False
-
-    def on_hdr_param_change(self, val):
-        if self.updating:
-            return
-        self.updating = True
-        self.max_cll = self.slider_max_cll.val
-        self.display_peak = self.slider_display_peak.val
-        self.roll_off = self.slider_roll_off.val
-        self.text_max_cll.set_val('{}'.format(int(self.max_cll)))
-        self.text_display_peak.set_val('{}'.format(int(self.display_peak)))
-        self.text_roll_off.set_val('{:.2f}'.format(self.roll_off))
-        self.update_analysis()
         self.updating = False
 
     def on_hdr_text_change(self, text):
@@ -712,6 +828,8 @@ class ColorAnalysisGUI:
             'HDR PQ': GammaType.HDR_PQ
         }
         self.current_gamma = gamma_map[label]
+        # EOTF 캐시 무효화
+        self.eotf_curve_cache.clear()
         self.update_analysis()
 
     def on_standard_change(self, label):
@@ -757,21 +875,28 @@ class ColorAnalysisGUI:
         self.update_analysis()
 
     def update_analysis(self):
+        """전체 분석 업데이트"""
+        self.perf.start("analyze")
         result = self.analyzer.analyze_color(
             self.rgb_ratio, self.brightness,
             self.current_gamma, self.current_standard,
             self.max_brightness,
             self.max_cll, self.display_peak, self.roll_off
         )
+        self.perf.end("analyze")
 
+        self.perf.start("display_all")
         self.display_color_sample(result)
         self.display_analysis_result(result)
         self.display_chromaticity_diagram(result)
         self.display_rgb_info(result)
         self.display_hdr_info(result)
         self.display_eotf_curve(result)
+        self.perf.end("display_all")
 
+        self.perf.start("canvas_draw")
         self.fig.canvas.draw_idle()
+        self.perf.end("canvas_draw")
 
     def display_color_sample(self, result):
         self.ax_sample.clear()
@@ -791,7 +916,6 @@ class ColorAnalysisGUI:
 
         unit = 'nits' if self.current_gamma == GammaType.HDR_PQ else 'cd/m2'
 
-        # 기본 분석 결과
         text_content = "Standard: {0}\nEOTF: {1}\n\nCIE xy:\n  x = {2:.4f}\n  y = {3:.4f}\n\nCIE XYZ:\n  X = {4:.4f}\n  Y = {5:.4f}\n  Z = {6:.4f}\n\nLuminance:\n  {7:.2f} {8}".format(
             result['color_standard'],
             result['gamma_type'],
@@ -804,7 +928,6 @@ class ColorAnalysisGUI:
             unit
         )
 
-        # 센서 측정 결과 추가
         if self.last_sensor_reading and self.last_sensor_reading.is_valid:
             text_content += "\n\n[SENSOR #{0}]\n  R={1:.3f} G={2:.3f} B={3:.3f}\n  Lum={4:.1f}cd/m2".format(
                 self.sensor.get_measurement_count(),
@@ -898,7 +1021,6 @@ class ColorAnalysisGUI:
                 'k*', markersize=16, label='Current',
                 markeredgecolor='yellow', markeredgewidth=2.5)
 
-            # 센서 측정 포인트 초기화 (처음엔 표시 안함)
             self.chromaticity_sensor_point, = self.ax_chromaticity.plot(
                 [], [], 'g^', markersize=12, label='Sensor',
                 markeredgecolor='lime', markeredgewidth=2)
@@ -906,9 +1028,9 @@ class ColorAnalysisGUI:
             self.ax_chromaticity.legend(loc='upper right', fontsize=9, framealpha=0.9)
             self._chromaticity_setup_done = True
         else:
+            # 포인트만 업데이트 (빠름)
             self.chromaticity_current_point.set_data([result['cie_x']], [result['cie_y']])
 
-        # 센서 측정값이 있으면 표시
         if self.last_sensor_reading and self.last_sensor_reading.is_valid:
             self.chromaticity_sensor_point.set_data(
                 [self.last_sensor_reading.cie_xy[0]],
@@ -922,7 +1044,7 @@ class ColorAnalysisGUI:
         self.ax_eotf.grid(True, alpha=0.3, linestyle='--')
         self.ax_eotf.tick_params(labelsize=9)
 
-        signal = np.linspace(0, 1, 400)
+        signal = self.eotf_signal
 
         if self.current_gamma == GammaType.HDR_PQ:
             luminance = GammaFunction.pq_eotf(signal, self.max_cll, 
@@ -997,20 +1119,24 @@ class ColorAnalysisGUI:
 
 def main():
     print("="*80)
-    print("Color Calibration & Analysis System with Sensor Module")
+    print("Color Calibration & Analysis System (OPTIMIZED)")
     print("="*80)
     print("")
-    print("Features:")
-    print("- Virtual Sensor simulation (2% noise)")
-    print("- Random RGB generation mode")
-    print("- Read Sensor button for measurement")
-    print("- Automatic RGB slider update from sensor")
-    print("- Sensor status display")
-    print("- Modular design (sensor_module.py)")
+    print("Performance Optimizations:")
+    print("- Mouse release update mode")
+    print("- Quick color preview during drag")
+    print("- Cached graphics elements")
+    print("- Minimized redraws")
+    print("")
+    print("Controls:")
+    print("- Press 'p' to toggle performance monitor")
+    print("- Drag sliders for instant preview")
+    print("- Release mouse for full update")
     print("="*80)
     print("")
 
-    app = ColorAnalysisGUI()
+    # enable_perf_monitor=True로 설정하면 성능 측정 가능
+    app = ColorAnalysisGUI(enable_perf_monitor=False)
     app.show()
 
 if __name__ == "__main__":

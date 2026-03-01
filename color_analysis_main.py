@@ -6,7 +6,7 @@ Display Color Calibration & Analysis System with Sensor Module (Optimized)
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
-from matplotlib.widgets import RadioButtons, Slider, TextBox, Button
+from matplotlib.widgets import RadioButtons, Slider, TextBox, Button, CheckButtons
 from matplotlib.image import imread
 import matplotlib.gridspec as gridspec
 from dataclasses import dataclass
@@ -17,7 +17,10 @@ from tkinter import Tk, filedialog
 import time
 
 # 센서 모듈 import
-from sensor_module import VirtualSensor, SensorReading
+from sensor_module import (
+    VirtualSensor, CRColorimeterSensor, SensorReading,
+    create_sensor, SensorInterface, CRReading,
+)
 
 if sys.platform == 'win32':
     try:
@@ -331,6 +334,414 @@ class ImageViewerWindow:
                 self.callback(r, g, b)
 
 # ============================================================================
+# Sensor Data Dashboard Window
+# ============================================================================
+
+class SensorDataWindow:
+    """센서 측정 데이터를 시각적으로 표시하는 대시보드 창"""
+
+    CATEGORIES = ['RGB', 'XYZ', 'CIE xy', 'Luminance', 'CCT', 'Info',
+                  'Spectrum', 'Temporal']
+
+    # CIE 1931 spectral locus (simplified boundary)
+    _LOCUS_X = [0.1741, 0.1644, 0.1566, 0.1440, 0.1241, 0.0913, 0.0687,
+                0.0454, 0.0082, 0.0139, 0.0743, 0.1547, 0.2296, 0.3016,
+                0.3731, 0.4441, 0.5125, 0.5752, 0.6270, 0.6658, 0.6915,
+                0.7079, 0.7190, 0.7260, 0.7320, 0.7334]
+    _LOCUS_Y = [0.0050, 0.0051, 0.0177, 0.0297, 0.0578, 0.1327, 0.2007,
+                0.2950, 0.5384, 0.7502, 0.8338, 0.8059, 0.7543, 0.6923,
+                0.6245, 0.5547, 0.4866, 0.4242, 0.3725, 0.3340, 0.3083,
+                0.2920, 0.2809, 0.2740, 0.2680, 0.2666]
+
+    def __init__(self):
+        self.fig = None
+        self.active = {c: (i < 6) for i, c in enumerate(self.CATEGORIES)}
+        self.last_data = None
+        self._display_axes = []
+        self._chk_ax = None
+
+    # ── open / close ──
+
+    def is_open(self):
+        return self.fig is not None and plt.fignum_exists(self.fig.number)
+
+    def toggle(self):
+        if self.is_open():
+            plt.close(self.fig)
+            self.fig = None
+        else:
+            self._create()
+            if self.last_data:
+                self._refresh()
+            else:
+                self._show_placeholder()
+
+    def update(self, data):
+        self.last_data = data
+        if self.is_open():
+            self._refresh()
+
+    # ── window creation ──
+
+    def _create(self):
+        self.fig = plt.figure('SensorDataDashboard', figsize=(17, 10))
+        self.fig.canvas.manager.set_window_title(
+            '\U0001F4CA  Sensor Data Dashboard')
+        self.fig.patch.set_facecolor('#f7f7f7')
+
+        # CheckButtons
+        self._chk_ax = self.fig.add_axes([0.005, 0.10, 0.095, 0.78])
+        self._chk_ax.set_facecolor('#eeeeee')
+        self._chk_ax.set_title('Data Types', fontsize=10,
+                               fontweight='bold', pad=6)
+        actives = [self.active[c] for c in self.CATEGORIES]
+        self.chk = CheckButtons(self._chk_ax, self.CATEGORIES, actives)
+        for lb in self.chk.labels:
+            lb.set_fontsize(9)
+        self.chk.on_clicked(self._on_toggle)
+
+        # Status bar
+        self._stat_ax = self.fig.add_axes([0.11, 0.01, 0.88, 0.04])
+        self._stat_ax.axis('off')
+        self._stat_text = self._stat_ax.text(
+            0.0, 0.5, 'No measurement data', fontsize=9,
+            family='monospace', va='center',
+            transform=self._stat_ax.transAxes)
+
+    def _on_toggle(self, label):
+        self.active[label] = not self.active[label]
+        if self.last_data:
+            self._refresh()
+
+    # ── display ──
+
+    def _clear(self):
+        for ax in self._display_axes:
+            try:
+                ax.remove()
+            except Exception:
+                pass
+        self._display_axes = []
+
+    def _show_placeholder(self):
+        self._clear()
+        ax = self.fig.add_axes([0.11, 0.10, 0.88, 0.82])
+        ax.axis('off')
+        ax.text(0.5, 0.5,
+                'No measurement data\n\n'
+                'Press  "Read Sensor"  in the main window',
+                fontsize=18, ha='center', va='center', color='gray',
+                transform=ax.transAxes)
+        self._display_axes.append(ax)
+        self.fig.canvas.draw_idle()
+
+    def _refresh(self):
+        self._clear()
+        d = self.last_data
+        if d is None:
+            self._show_placeholder()
+            return
+
+        # ── title bar ──
+        ax_t = self.fig.add_axes([0.11, 0.91, 0.88, 0.07])
+        ax_t.axis('off')
+        ts = time.strftime('%Y-%m-%d  %H:%M:%S',
+                           time.localtime(d['timestamp']))
+        ax_t.text(0.5, 0.45,
+                  'Measurement #{} │ {} │ {}'.format(
+                      d['measurement_number'], ts,
+                      d['info'].get('sensor_type', '?')),
+                  fontsize=13, fontweight='bold', ha='center', va='center',
+                  transform=ax_t.transAxes,
+                  bbox=dict(boxstyle='round,pad=0.4',
+                            facecolor='lightsteelblue', alpha=0.6))
+        self._display_axes.append(ax_t)
+
+        # ── grid positions ──
+        L, R = 0.12, 0.99
+        total_w = R - L
+        cw = (total_w - 0.04) / 3   # column width
+        gx = 0.02                     # x gap
+
+        pos = {
+            'RGB':       [L,               0.57, cw, 0.30],
+            'XYZ':       [L + cw + gx,     0.57, cw, 0.30],
+            'Luminance': [L + 2*(cw+gx),   0.57, cw, 0.30],
+            'CIE xy':    [L,               0.22, cw, 0.30],
+            'CCT':       [L + cw + gx,     0.22, cw, 0.30],
+            'Info':      [L + 2*(cw+gx),   0.22, cw, 0.30],
+        }
+
+        spec_on = self.active.get('Spectrum', False)
+        temp_on = self.active.get('Temporal', False)
+        if spec_on and temp_on:
+            hw = total_w / 2 - 0.01
+            pos['Spectrum'] = [L,        0.06, hw, 0.13]
+            pos['Temporal'] = [L+hw+0.02, 0.06, hw, 0.13]
+        elif spec_on:
+            pos['Spectrum'] = [L, 0.06, total_w, 0.13]
+        elif temp_on:
+            pos['Temporal'] = [L, 0.06, total_w, 0.13]
+
+        draw = {
+            'RGB': self._draw_rgb, 'XYZ': self._draw_xyz,
+            'CIE xy': self._draw_xy, 'Luminance': self._draw_lum,
+            'CCT': self._draw_cct, 'Info': self._draw_info,
+            'Spectrum': self._draw_spectrum, 'Temporal': self._draw_temporal,
+        }
+
+        for cat in self.CATEGORIES:
+            if self.active.get(cat) and cat in pos:
+                ax = self.fig.add_axes(pos[cat])
+                self._display_axes.append(ax)
+                draw[cat](ax, d)
+
+        # status bar
+        self._stat_text.set_text(
+            'Valid: {} │ RGB [{:.3f}, {:.3f}, {:.3f}] │ '
+            'Lum {:.1f} cd/m² │ xy ({:.4f}, {:.4f})'.format(
+                '\u2713' if d['is_valid'] else '\u2717',
+                d['rgb'][0], d['rgb'][1], d['rgb'][2],
+                d['luminance'],
+                d['cie_xy'][0], d['cie_xy'][1]))
+        self.fig.canvas.draw_idle()
+
+    # ────────── category renderers ──────────
+
+    def _draw_rgb(self, ax, d):
+        ax.set_title('RGB Values', fontsize=11, fontweight='bold', pad=6)
+        r, g, b = d['rgb']
+        ax.barh([2, 1, 0], [r, g, b],
+                color=['#ee4444', '#44bb44', '#4488ff'],
+                edgecolor='#333', linewidth=0.5, height=0.55)
+        ax.set_xlim(0, 1.18)
+        ax.set_ylim(-0.5, 2.9)
+        ax.set_yticks([2, 1, 0])
+        ax.set_yticklabels(['R', 'G', 'B'], fontsize=11, fontweight='bold')
+        ax.set_xticks([0, 0.25, 0.5, 0.75, 1.0])
+        ax.tick_params(axis='x', labelsize=8)
+        ax.grid(axis='x', alpha=0.25)
+        for val, y in zip([r, g, b], [2, 1, 0]):
+            ax.text(min(val + 0.02, 1.0), y, '{:.4f}'.format(val),
+                    va='center', fontsize=10, fontweight='bold',
+                    family='monospace')
+        # swatch
+        from matplotlib.patches import FancyBboxPatch
+        sw = FancyBboxPatch(
+            (0.82, 2.25), 0.32, 0.55,
+            boxstyle='round,pad=0.06',
+            facecolor=(np.clip(r, 0, 1), np.clip(g, 0, 1), np.clip(b, 0, 1)),
+            edgecolor='black', linewidth=1.5)
+        ax.add_patch(sw)
+
+    def _draw_xyz(self, ax, d):
+        ax.set_title('CIE XYZ Tristimulus', fontsize=11,
+                     fontweight='bold', pad=6)
+        X, Y, Z = d['xyz']
+        mx = max(X, Y, Z, 0.001)
+        ax.barh([2, 1, 0], [X, Y, Z],
+                color=['#dca0a0', '#a0dca0', '#a0a0dc'],
+                edgecolor='#555', linewidth=0.5, height=0.55)
+        ax.set_xlim(0, mx * 1.4)
+        ax.set_ylim(-0.5, 2.9)
+        ax.set_yticks([2, 1, 0])
+        ax.set_yticklabels(['X', 'Y', 'Z'], fontsize=11, fontweight='bold')
+        ax.tick_params(axis='x', labelsize=8)
+        ax.grid(axis='x', alpha=0.25)
+        for val, y in zip([X, Y, Z], [2, 1, 0]):
+            ax.text(val + mx * 0.02, y, '{:.4f}'.format(val),
+                    va='center', fontsize=10, fontweight='bold',
+                    family='monospace')
+
+    def _draw_xy(self, ax, d):
+        ax.set_title('CIE 1931 xy', fontsize=11, fontweight='bold', pad=6)
+        lx = self._LOCUS_X + [self._LOCUS_X[0]]
+        ly = self._LOCUS_Y + [self._LOCUS_Y[0]]
+        ax.fill(lx, ly, color='#e4e4e4', alpha=0.5)
+        ax.plot(lx, ly, 'k-', linewidth=0.7, alpha=0.4)
+        x, y = d['cie_xy']
+        ax.plot(x, y, 'r*', markersize=16,
+                markeredgecolor='darkred', markeredgewidth=1.5, zorder=10)
+        ax.plot(0.3127, 0.3290, 'k+', markersize=10,
+                markeredgewidth=1.5, alpha=0.35, zorder=5)
+        ax.annotate('D65', (0.3127, 0.3290), fontsize=7, alpha=0.45,
+                    xytext=(5, 5), textcoords='offset points')
+        ax.text(0.97, 0.05,
+                'x = {:.4f}\ny = {:.4f}'.format(x, y),
+                transform=ax.transAxes, fontsize=11, fontweight='bold',
+                family='monospace', ha='right', va='bottom',
+                bbox=dict(boxstyle='round,pad=0.3',
+                          facecolor='white', alpha=0.85))
+        ax.set_xlim(-0.02, 0.78)
+        ax.set_ylim(-0.02, 0.88)
+        ax.set_xlabel('x', fontsize=9)
+        ax.set_ylabel('y', fontsize=9)
+        ax.tick_params(labelsize=7)
+        ax.grid(True, alpha=0.2)
+        ax.set_aspect('equal')
+
+    def _draw_lum(self, ax, d):
+        ax.set_title('Luminance', fontsize=11, fontweight='bold', pad=6)
+        ax.axis('off')
+        lum = d['luminance']
+        ax.text(0.50, 0.62, '{:.1f}'.format(lum),
+                fontsize=40, fontweight='bold', ha='center', va='center',
+                transform=ax.transAxes, color='#333')
+        ax.text(0.50, 0.38, 'cd/m\u00b2', fontsize=15,
+                ha='center', va='center',
+                transform=ax.transAxes, color='#666')
+        # level bar
+        bar = ax.inset_axes([0.08, 0.06, 0.84, 0.14])
+        mx = max(lum * 1.5, 200)
+        bar.barh(0, lum, color='gold', edgecolor='#444', height=0.6)
+        bar.set_xlim(0, mx)
+        bar.set_yticks([])
+        bar.tick_params(axis='x', labelsize=7)
+        bar.set_xlabel('cd/m\u00b2', fontsize=7)
+        # u'v' 정보 함께 표시
+        uv = d.get('cie_uv')
+        if uv:
+            ax.text(0.50, 0.24,
+                    "u'={:.4f}  v'={:.4f}".format(uv[0], uv[1]),
+                    fontsize=10, ha='center', va='center',
+                    transform=ax.transAxes, family='monospace',
+                    color='#555')
+            du = uv[0] - 0.1978
+            dv = uv[1] - 0.4683
+            duv = np.sqrt(du**2 + dv**2)
+            ax.text(0.50, 0.15,
+                    '\u0394uv = {:.4f}'.format(duv),
+                    fontsize=9, ha='center', va='center',
+                    transform=ax.transAxes, family='monospace',
+                    color='#888')
+
+    def _draw_cct(self, ax, d):
+        ax.set_title('CCT (Color Temperature)', fontsize=11,
+                     fontweight='bold', pad=6)
+        ax.axis('off')
+        cct = d.get('cct')
+        if cct and 1000 < cct < 25000:
+            ax.text(0.50, 0.65, '{:.0f} K'.format(cct),
+                    fontsize=30, fontweight='bold', ha='center',
+                    va='center', transform=ax.transAxes, color='#333')
+            # warm/cool label
+            label = 'Warm' if cct < 4000 else ('Neutral' if cct < 5500 else 'Cool')
+            ax.text(0.50, 0.43, label, fontsize=12, ha='center',
+                    va='center', transform=ax.transAxes, color='#777')
+            # color temperature bar
+            bar = ax.inset_axes([0.05, 0.06, 0.90, 0.18])
+            temps = np.linspace(2000, 10000, 256)
+            colors = []
+            for t in temps:
+                if t < 6600:
+                    rr = 1.0
+                    gg = np.clip(0.39*np.log(t/100) - 0.63, 0, 1)
+                    bb = (np.clip(0.54*np.log(t/100-10)-1.68, 0, 1)
+                          if t > 2000 else 0)
+                else:
+                    rr = np.clip(1.29*(t/100-60)**(-0.13), 0, 1)
+                    gg = np.clip(1.13*(t/100-60)**(-0.07), 0, 1)
+                    bb = 1.0
+                colors.append((rr, gg, bb))
+            bar.imshow([colors], aspect='auto',
+                       extent=[2000, 10000, 0, 1])
+            bar.axvline(x=cct, color='black', linewidth=2.5)
+            bar.axvline(x=cct, color='white', linewidth=1.0)
+            bar.set_xlim(2000, 10000)
+            bar.set_yticks([])
+            bar.set_xticks([2000, 4000, 6500, 10000])
+            bar.tick_params(axis='x', labelsize=7)
+        else:
+            ax.text(0.50, 0.50, 'CCT\nN/A', fontsize=16,
+                    ha='center', va='center',
+                    transform=ax.transAxes, color='gray')
+
+    def _draw_info(self, ax, d):
+        ax.set_title('Measurement Info', fontsize=11,
+                     fontweight='bold', pad=6)
+        ax.axis('off')
+        info = d.get('info', {})
+        lines = []
+        for k, v in info.items():
+            if v:
+                disp = k.replace('_', ' ').title()
+                lines.append('{:<14s}: {}'.format(disp, v))
+        text = '\n'.join(lines) if lines else 'No info available'
+        ax.text(0.05, 0.95, text, fontsize=9, family='monospace',
+                ha='left', va='top', transform=ax.transAxes,
+                bbox=dict(boxstyle='round,pad=0.4',
+                          facecolor='lightyellow', alpha=0.5))
+
+    def _draw_spectrum(self, ax, d):
+        ax.set_title('Spectral Distribution', fontsize=10,
+                     fontweight='bold', pad=4)
+        spec = d.get('spectrum')
+        if spec and spec.get('values') and len(spec['values']) > 1:
+            wl = spec['wavelengths']
+            vals = spec['values']
+            ax.plot(wl, vals, 'k-', linewidth=1.0)
+            for i in range(len(wl) - 1):
+                c = self._wl2rgb(wl[i])
+                ax.fill_between(wl[i:i+2], vals[i:i+2], alpha=0.55, color=c)
+            ax.set_xlabel('Wavelength (nm)', fontsize=8)
+            ax.set_ylabel('Intensity', fontsize=8)
+            ax.set_xlim(min(wl), max(wl))
+            ax.tick_params(labelsize=7)
+            ax.grid(True, alpha=0.2)
+        else:
+            ax.axis('off')
+            ax.text(0.5, 0.5,
+                    'Spectrum: N/A  (Real sensor only)',
+                    fontsize=11, ha='center', va='center',
+                    transform=ax.transAxes, color='gray')
+
+    def _draw_temporal(self, ax, d):
+        ax.set_title('Temporal Data', fontsize=10,
+                     fontweight='bold', pad=4)
+        temp = d.get('temporal')
+        if temp and temp.get('values') and len(temp['values']) > 1:
+            v = temp['values']
+            sr = max(temp.get('sampling_rate', 1.0), 1.0)
+            t_ax = np.arange(len(v)) / sr
+            ax.plot(t_ax, v, 'b-', linewidth=0.7, alpha=0.85)
+            ax.set_xlabel('Time (s)', fontsize=8)
+            ax.set_ylabel('Level', fontsize=8)
+            ax.tick_params(labelsize=7)
+            ax.grid(True, alpha=0.2)
+        else:
+            ax.axis('off')
+            ax.text(0.5, 0.5,
+                    'Temporal: N/A  (Real sensor only)',
+                    fontsize=11, ha='center', va='center',
+                    transform=ax.transAxes, color='gray')
+
+    @staticmethod
+    def _wl2rgb(wl):
+        """Wavelength (nm) → approximate display RGB"""
+        if wl < 380 or wl > 780:
+            return (0, 0, 0)
+        elif wl < 440:
+            r, g, b = -(wl-440)/60, 0.0, 1.0
+        elif wl < 490:
+            r, g, b = 0.0, (wl-440)/50, 1.0
+        elif wl < 510:
+            r, g, b = 0.0, 1.0, -(wl-510)/20
+        elif wl < 580:
+            r, g, b = (wl-510)/70, 1.0, 0.0
+        elif wl < 645:
+            r, g, b = 1.0, -(wl-645)/65, 0.0
+        else:
+            r, g, b = 1.0, 0.0, 0.0
+        if wl < 420:
+            f = 0.3 + 0.7*(wl-380)/40
+        elif wl > 700:
+            f = 0.3 + 0.7*(780-wl)/80
+        else:
+            f = 1.0
+        return (r*f, g*f, b*f)
+
+
+# ============================================================================
 # GUI with Sensor Module (OPTIMIZED)
 # ============================================================================
 
@@ -353,10 +764,16 @@ class ColorAnalysisGUI:
         self.analyzer = ColorAnalyzerAdvanced()
         self.image_viewer = ImageViewerWindow(self.on_pixel_picked)
 
-        # 센서 초기화
+        # 센서 초기화 (기본: 가상 센서)
         self.sensor = VirtualSensor(noise_level=0.02)
         self.sensor.connect()
         self.last_sensor_reading = None
+        self.sensor_type = 'virtual'           # 'virtual' 또는 'cr'
+        self.selected_port = None              # 선택된 COM 포트
+        self.available_ports = []              # 감지된 COM 포트 목록
+
+        # 센서 데이터 대시보드 창
+        self.sensor_data_window = SensorDataWindow()
 
         # 최적화 플래그
         self.updating = False
@@ -571,26 +988,213 @@ class ColorAnalysisGUI:
         self.setup_image_button()
 
     def setup_sensor_controls(self):
-        """센서 제어 버튼"""
+        """센서 제어 UI: COM 포트 감지/선택 + 연결/측정 버튼"""
+
+        # ── Read Sensor 버튼 ──
         ax_read = plt.axes([0.32, 0.03, 0.12, 0.04])
-        self.btn_read_sensor = Button(ax_read, 'Read Sensor', 
+        self.btn_read_sensor = Button(ax_read, 'Read Sensor',
                                       color='lightgreen', hovercolor='limegreen')
         self.btn_read_sensor.label.set_fontsize(11)
         self.btn_read_sensor.label.set_weight('bold')
         self.btn_read_sensor.on_clicked(self.on_read_sensor)
 
-        ax_sensor_status = plt.axes([0.01, 0.38, 0.11, 0.06])
-        ax_sensor_status.axis('off')
-        ax_sensor_status.set_title('Sensor Status', fontsize=11, fontweight='bold', pad=8)
+        # ── Data Panel 버튼 ──
+        ax_data = plt.axes([0.45, 0.03, 0.12, 0.04])
+        self.btn_data_panel = Button(ax_data, '\U0001F4CA Data Panel',
+                                     color='lightyellow', hovercolor='gold')
+        self.btn_data_panel.label.set_fontsize(11)
+        self.btn_data_panel.label.set_weight('bold')
+        self.btn_data_panel.on_clicked(self.on_toggle_data_panel)
 
-        status_text = "Status: Connected\nType: Virtual Sensor\nNoise: 2%\nMode: Random RGB"
+        # ── Sensor Status 영역 (왼쪽 사이드) ──
+        ax_sensor_status = plt.axes([0.01, 0.22, 0.11, 0.22])
+        ax_sensor_status.axis('off')
+        ax_sensor_status.set_title('Sensor', fontsize=11, fontweight='bold', pad=4)
+
+        # ── Scan Ports 버튼 ──
+        ax_scan = plt.axes([0.015, 0.385, 0.10, 0.03])
+        self.btn_scan_ports = Button(ax_scan, '\u27F3 Scan Ports',
+                                     color='lightyellow', hovercolor='gold')
+        self.btn_scan_ports.label.set_fontsize(9)
+        self.btn_scan_ports.on_clicked(self.on_scan_ports)
+
+        # ── COM 포트 선택 라디오 버튼 영역 ──
+        self.ax_port_radio = plt.axes([0.01, 0.27, 0.11, 0.11])
+        self.ax_port_radio.set_title('COM Port', fontsize=9, fontweight='bold', pad=2)
+        # 초기에는 "Virtual" 만 표시
+        self._port_labels = ['Virtual']
+        self.radio_port = RadioButtons(self.ax_port_radio, self._port_labels,
+                                       activecolor='dodgerblue')
+        for lbl in self.radio_port.labels:
+            lbl.set_fontsize(8)
+        self.radio_port.on_clicked(self.on_port_selected)
+
+        # ── Connect / Disconnect 버튼 ──
+        ax_connect = plt.axes([0.015, 0.24, 0.10, 0.025])
+        self.btn_connect = Button(ax_connect, 'Connect',
+                                  color='lightblue', hovercolor='deepskyblue')
+        self.btn_connect.label.set_fontsize(9)
+        self.btn_connect.label.set_weight('bold')
+        self.btn_connect.on_clicked(self.on_connect_sensor)
+
+        # ── 상태 텍스트 ──
         self.sensor_status_text = ax_sensor_status.text(
-            0.05, 0.5, status_text,
-            ha='left', va='center',
-            fontsize=9, family='monospace',
+            0.05, 0.15,
+            "Virtual Sensor\nConnected\nNoise: 2%",
+            ha='left', va='bottom',
+            fontsize=8, family='monospace',
             transform=ax_sensor_status.transAxes,
-            bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgreen', alpha=0.3)
+            bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgreen', alpha=0.4)
         )
+
+        # 초기 스캔 실행
+        self._do_scan_ports(silent=True)
+
+    # ------------------------------------------------------------------
+    # COM Port Scan / Select / Connect
+    # ------------------------------------------------------------------
+
+    def _do_scan_ports(self, silent=False):
+        """COM 포트 스캔 후 라디오 버튼 갱신"""
+        detailed = CRColorimeterSensor.scan_ports_detailed()
+        self.available_ports = detailed
+
+        # 라디오 버튼 레이블 구성
+        labels = ['Virtual']
+        for p in detailed:
+            desc = p['description']
+            # 짧게 표시 (길면 자르기)
+            if len(desc) > 18:
+                desc = desc[:16] + '..'
+            labels.append('{} ({})'.format(p['device'], desc))
+
+        # 기존 라디오 버튼 제거 후 재생성
+        self.ax_port_radio.clear()
+        self.ax_port_radio.set_title('COM Port', fontsize=9, fontweight='bold', pad=2)
+        self._port_labels = labels
+
+        # 라디오 높이 조정
+        self.radio_port = RadioButtons(self.ax_port_radio, labels,
+                                       activecolor='dodgerblue')
+        for lbl in self.radio_port.labels:
+            lbl.set_fontsize(8)
+        self.radio_port.on_clicked(self.on_port_selected)
+
+        # 현재 선택 유지
+        if self.sensor_type == 'virtual':
+            self.radio_port.set_active(0)
+        elif self.selected_port:
+            for i, p in enumerate(detailed):
+                if p['device'] == self.selected_port:
+                    self.radio_port.set_active(i + 1)
+                    break
+
+        if not silent:
+            n = len(detailed)
+            print("[COM Scan] {} port(s) detected".format(n))
+            for p in detailed:
+                print("  {} : {} [{}]".format(
+                    p['device'], p['description'], p['hwid']))
+            if n == 0:
+                print("  No COM ports found. Using Virtual Sensor.")
+            self.fig.canvas.draw_idle()
+
+    def on_scan_ports(self, event):
+        """Scan Ports 버튼 클릭"""
+        self._do_scan_ports(silent=False)
+
+    def on_port_selected(self, label):
+        """COM 포트 라디오 버튼 선택"""
+        if label == 'Virtual':
+            self.selected_port = None
+            self.sensor_type = 'virtual'
+            self._update_connect_button_label('Connect')
+        else:
+            # 레이블에서 COMx 추출
+            port_name = label.split(' ')[0]  # "COM3 (desc)" → "COM3"
+            self.selected_port = port_name
+            self.sensor_type = 'cr'
+            self._update_connect_button_label('Connect')
+        print("[Port] Selected: {}".format(
+            self.selected_port if self.selected_port else 'Virtual'))
+
+    def on_connect_sensor(self, event):
+        """Connect / Disconnect 버튼 클릭"""
+        if self.sensor.is_connected():
+            # ── Disconnect ──
+            self.sensor.disconnect()
+            self._update_sensor_status_display(connected=False)
+            self._update_connect_button_label('Connect')
+            print("[Sensor] Disconnected")
+        else:
+            # ── Connect ──
+            self._connect_selected_sensor()
+
+    def _connect_selected_sensor(self):
+        """선택된 센서에 연결"""
+        # 기존 센서 해제
+        if self.sensor.is_connected():
+            self.sensor.disconnect()
+
+        if self.sensor_type == 'virtual' or self.selected_port is None:
+            # 가상 센서
+            self.sensor = VirtualSensor(noise_level=0.02)
+            success = self.sensor.connect()
+            if success:
+                self._update_sensor_status_display(connected=True)
+                self._update_connect_button_label('Disconnect')
+                print("[Sensor] Virtual Sensor connected")
+        else:
+            # CR 센서 (실제 COM 포트)
+            print("[Sensor] Connecting to {} ...".format(self.selected_port))
+            self.sensor = CRColorimeterSensor(port=self.selected_port)
+            success = self.sensor.connect()
+            if success:
+                info = self.sensor.get_device_info()
+                self._update_sensor_status_display(
+                    connected=True, info=info)
+                self._update_connect_button_label('Disconnect')
+                print("[Sensor] Connected: {} (FW: {})".format(
+                    info.get('model', '?'), info.get('firmware', '?')))
+            else:
+                self._update_sensor_status_display(connected=False,
+                                                   error="Connection failed")
+                print("[Sensor] FAILED to connect to {}".format(
+                    self.selected_port))
+
+    def _update_connect_button_label(self, text):
+        """Connect 버튼 텍스트 변경"""
+        self.btn_connect.label.set_text(text)
+        if text == 'Disconnect':
+            self.btn_connect.color = 'lightsalmon'
+            self.btn_connect.hovercolor = 'salmon'
+        else:
+            self.btn_connect.color = 'lightblue'
+            self.btn_connect.hovercolor = 'deepskyblue'
+        self.fig.canvas.draw_idle()
+
+    def _update_sensor_status_display(self, connected, info=None, error=None):
+        """센서 상태 텍스트 업데이트"""
+        if error:
+            text = "DISCONNECTED\n{}".format(error)
+            color = 'lightsalmon'
+        elif not connected:
+            text = "Disconnected"
+            color = 'lightyellow'
+        elif self.sensor_type == 'virtual':
+            text = "Virtual Sensor\nConnected\nNoise: 2%"
+            color = 'lightgreen'
+        else:
+            # CR 실제 센서
+            model = info.get('model', '?') if info else '?'
+            fw = info.get('firmware', '?') if info else '?'
+            port = self.selected_port or '?'
+            text = "{}\nFW: {}\nPort: {}\nConnected".format(model, fw, port)
+            color = 'lightgreen'
+
+        self.sensor_status_text.set_text(text)
+        self.sensor_status_text.get_bbox_patch().set_facecolor(color)
+        self.fig.canvas.draw_idle()
 
     def on_read_sensor(self, event):
         """센서 읽기 버튼 클릭"""
@@ -615,8 +1219,112 @@ class ColorAnalysisGUI:
         print("  Timestamp: {:.3f}".format(reading.timestamp))
         print("="*60 + "\n")
 
+        # 확장 데이터 빌드 → 대시보드 업데이트
+        ext = self._build_extended_data(reading)
+        self.sensor_data_window.update(ext)
+
         self.apply_sensor_reading_to_sliders(reading)
         self.update_analysis()
+
+    def on_toggle_data_panel(self, event):
+        """📊 Data Panel 버튼 클릭"""
+        self.sensor_data_window.toggle()
+
+    def _build_extended_data(self, reading):
+        """SensorReading + CR raw data → 대시보드용 확장 dict 생성"""
+        x, y = reading.cie_xy
+
+        # xy → u'v'
+        denom = -2*x + 12*y + 3
+        if denom > 1e-10:
+            u_p = 4*x / denom
+            v_p = 9*y / denom
+        else:
+            u_p, v_p = 0.1978, 0.4683
+
+        # McCamy CCT approximation
+        nd = (0.1858 - y)
+        n = (x - 0.3320) / nd if abs(nd) > 1e-10 else 0
+        cct = 449*n**3 + 3525*n**2 + 6823.3*n + 5520.33
+        if not (1000 < cct < 25000):
+            cct = None
+
+        data = {
+            'rgb': [float(v) for v in reading.rgb],
+            'xyz': [float(v) for v in reading.xyz],
+            'cie_xy': reading.cie_xy,
+            'luminance': reading.luminance,
+            'cct': cct,
+            'cie_uv': (u_p, v_p),
+            'spectrum': None,
+            'temporal': None,
+            'info': {},
+            'timestamp': reading.timestamp,
+            'measurement_number': self.sensor.get_measurement_count(),
+            'is_valid': reading.is_valid,
+        }
+
+        # ── 가상 센서 ──
+        if isinstance(self.sensor, VirtualSensor):
+            data['info'] = {
+                'sensor_type': 'Virtual Sensor',
+                'noise_level': '{:.1f}%'.format(
+                    self.sensor.noise_level * 100),
+                'measurements': str(self.sensor.get_measurement_count()),
+            }
+
+        # ── CR 센서: last_reading 에서 상세 데이터 추출 ──
+        elif isinstance(self.sensor, CRColorimeterSensor):
+            cr = getattr(self.sensor, 'last_reading', None)
+            if cr is not None:
+                cie = cr.cie[0]  # 2° observer
+                # u'v' from sensor
+                uv_str = cie.upvp or cie.uv
+                if uv_str:
+                    pts = uv_str.replace("),", ",").split(",")
+                    if len(pts) >= 2:
+                        try:
+                            data['cie_uv'] = (
+                                float(pts[0].strip()),
+                                float(pts[1].strip()))
+                        except ValueError:
+                            pass
+                # CCT from sensor
+                if cie.CCT:
+                    try:
+                        data['cct'] = float(cie.CCT)
+                    except ValueError:
+                        pass
+                # Spectrum
+                if cr.spectrum and cr.spectrum.data:
+                    sw = cr.spectrum.starting_wavelength
+                    delta = cr.spectrum.delta or 5.0
+                    n_pts = len(cr.spectrum.data)
+                    data['spectrum'] = {
+                        'wavelengths': [sw + i*delta
+                                        for i in range(n_pts)],
+                        'values': cr.spectrum.data,
+                    }
+                # Temporal
+                if cr.temporal and cr.temporal.data:
+                    data['temporal'] = {
+                        'sampling_rate': cr.temporal.sampling_rate,
+                        'values': cr.temporal.data,
+                    }
+                # Info
+                data['info'] = {
+                    'sensor_type': 'CR Colorimeter',
+                    'model': cr.model or '?',
+                    'mode': cr.mode or '?',
+                    'exposure': cr.exposure or '?',
+                    'speed': cr.speed or '?',
+                    'aperture': cr.aperture or '?',
+                    'sync_mode': cr.sync_mode or '?',
+                    'sync_freq': cr.sync_freq or '?',
+                    'cmf': cr.cmf or '?',
+                    'time': cr.time or '?',
+                }
+        return data
 
     def apply_sensor_reading_to_sliders(self, reading: SensorReading):
         """센서 측정 결과를 슬라이더에 적용"""

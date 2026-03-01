@@ -1,0 +1,39 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 10.00
+# Visual Studio 2008
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "CRRemote", "CRRemote\CRRemote.vcproj", "{41CFD5A7-8DF6-4CB3-979E-A96E87DA1F82}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "RemoteCommunication", "RemoteCommunication\RemoteCommunication.vcproj", "{35BFA8F5-36C1-477A-8B3D-69D91EE271FE}"
+	ProjectSection(ProjectDependencies) = postProject
+		{41CFD5A7-8DF6-4CB3-979E-A96E87DA1F82} = {41CFD5A7-8DF6-4CB3-979E-A96E87DA1F82}
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Win32 = Debug|Win32
+		Release|Win32 = Release|Win32
+		Unicode Debug|Win32 = Unicode Debug|Win32
+		Unicode Release|Win32 = Unicode Release|Win32
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{41CFD5A7-8DF6-4CB3-979E-A96E87DA1F82}.Debug|Win32.ActiveCfg = Debug|Win32
+		{41CFD5A7-8DF6-4CB3-979E-A96E87DA1F82}.Debug|Win32.Build.0 = Debug|Win32
+		{41CFD5A7-8DF6-4CB3-979E-A96E87DA1F82}.Release|Win32.ActiveCfg = Release|Win32
+		{41CFD5A7-8DF6-4CB3-979E-A96E87DA1F82}.Release|Win32.Build.0 = Release|Win32
+		{41CFD5A7-8DF6-4CB3-979E-A96E87DA1F82}.Unicode Debug|Win32.ActiveCfg = Debug|Win32
+		{41CFD5A7-8DF6-4CB3-979E-A96E87DA1F82}.Unicode Debug|Win32.Build.0 = Debug|Win32
+		{41CFD5A7-8DF6-4CB3-979E-A96E87DA1F82}.Unicode Release|Win32.ActiveCfg = Release|Win32
+		{41CFD5A7-8DF6-4CB3-979E-A96E87DA1F82}.Unicode Release|Win32.Build.0 = Release|Win32
+		{35BFA8F5-36C1-477A-8B3D-69D91EE271FE}.Debug|Win32.ActiveCfg = Debug|Win32
+		{35BFA8F5-36C1-477A-8B3D-69D91EE271FE}.Debug|Win32.Build.0 = Debug|Win32
+		{35BFA8F5-36C1-477A-8B3D-69D91EE271FE}.Release|Win32.ActiveCfg = Release|Win32
+		{35BFA8F5-36C1-477A-8B3D-69D91EE271FE}.Release|Win32.Build.0 = Release|Win32
+		{35BFA8F5-36C1-477A-8B3D-69D91EE271FE}.Unicode Debug|Win32.ActiveCfg = Debug|Win32
+		{35BFA8F5-36C1-477A-8B3D-69D91EE271FE}.Unicode Debug|Win32.Build.0 = Debug|Win32
+		{35BFA8F5-36C1-477A-8B3D-69D91EE271FE}.Unicode Release|Win32.ActiveCfg = Release|Win32
+		{35BFA8F5-36C1-477A-8B3D-69D91EE271FE}.Unicode Release|Win32.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

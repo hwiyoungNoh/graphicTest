@@ -1,0 +1,266 @@
+2026-02-28 23:41:24,781 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,783 [INFO    ] test_sensor - >>> CRColorimeterSensor pyserial 미설치 테스트
+2026-02-28 23:41:24,783 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,783 [ERROR   ] sensor_module - [CR Sensor] pyserial 패키지가 필요합니다. 'pip install pyserial'로 설치하세요.
+2026-02-28 23:41:24,783 [INFO    ] test_sensor -     ✔ pyserial 없을 때 connect() = False
+2026-02-28 23:41:24,783 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,783 [INFO    ] test_sensor - >>> CRColorimeterSensor 미연결 disconnect 테스트
+2026-02-28 23:41:24,783 [INFO    ] sensor_module - [CR Sensor] Disconnected from COM99
+2026-02-28 23:41:24,783 [INFO    ] test_sensor -     ✔ 미연결 상태에서 disconnect 안전하게 성공
+2026-02-28 23:41:24,784 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,784 [INFO    ] test_sensor - >>> CRColorimeterSensor 초기 상태 테스트
+2026-02-28 23:41:24,784 [INFO    ] test_sensor -     ✔ 초기 상태 정상
+2026-02-28 23:41:24,784 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,784 [INFO    ] test_sensor - >>> CRColorimeterSensor 미연결 read 테스트
+2026-02-28 23:41:24,784 [INFO    ] test_sensor -     ✔ 미연결 시 is_valid=False, 에러메시지: 'Sensor not connected'
+2026-02-28 23:41:24,784 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,784 [INFO    ] test_sensor - >>> CRReading 10° Observer 테스트
+2026-02-28 23:41:24,858 [INFO    ] test_sensor -     ✔ 10° Observer 파싱 정상: [31.0, 41.0, 51.0]
+2026-02-28 23:41:24,858 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,858 [INFO    ] test_sensor - >>> CRReading 빈 휘도 파싱 테스트
+2026-02-28 23:41:24,858 [INFO    ] test_sensor -     ✔ 빈 값 → 0.0 cd/m²
+2026-02-28 23:41:24,859 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,859 [INFO    ] test_sensor - >>> CRReading 휘도 파싱 테스트
+2026-02-28 23:41:24,859 [INFO    ] test_sensor -     ✔ 휘도 파싱 정상: 120.5 cd/m²
+2026-02-28 23:41:24,859 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,859 [INFO    ] test_sensor - >>> CRReading xy fallback 테스트
+2026-02-28 23:41:24,859 [INFO    ] test_sensor -     ✔ XYZ→xy fallback 정상: (0.3127, 0.3290)
+2026-02-28 23:41:24,859 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,859 [INFO    ] test_sensor - >>> CRReading xy 파싱 테스트 (유효)
+2026-02-28 23:41:24,860 [INFO    ] test_sensor -     ✔ xy 파싱 정상: (0.3127, 0.3290)
+2026-02-28 23:41:24,860 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,860 [INFO    ] test_sensor - >>> CRReading XYZ 파싱 테스트 (빈 값)
+2026-02-28 23:41:24,860 [INFO    ] test_sensor -     ✔ 빈 XYZ → [0,0,0]
+2026-02-28 23:41:24,860 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,860 [INFO    ] test_sensor - >>> CRReading XYZ 파싱 테스트 (잘못된 값)
+2026-02-28 23:41:24,860 [INFO    ] test_sensor -     ✔ 잘못된 값 → [0,0,0] fallback
+2026-02-28 23:41:24,860 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,860 [INFO    ] test_sensor - >>> CRReading XYZ 파싱 테스트 (유효)
+2026-02-28 23:41:24,861 [INFO    ] test_sensor -     ✔ XYZ 파싱 정상: [30.5, 40.2, 50.7]
+2026-02-28 23:41:24,861 [INFO    ] test_sensor - >>> Mock 시리얼 ER 응답 예외 테스트
+2026-02-28 23:41:24,861 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM3, Baud: 9600)
+2026-02-28 23:41:24,882 [DEBUG   ] sensor_module - [CR Sensor] TX: M
+2026-02-28 23:41:24,883 [DEBUG   ] sensor_module - [CR Sensor] RX: ER:01:M:Sensor not ready
+2026-02-28 23:41:24,883 [INFO    ] test_sensor -     ✔ RuntimeError 발생: CR Sensor Error [01]: M - Sensor not ready
+2026-02-28 23:41:24,883 [INFO    ] test_sensor - >>> Mock 시리얼 리스트 응답 테스트
+2026-02-28 23:41:24,883 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM3, Baud: 9600)
+2026-02-28 23:41:24,905 [DEBUG   ] sensor_module - [CR Sensor] TX: RC Mode
+2026-02-28 23:41:24,905 [DEBUG   ] sensor_module - [CR Sensor] RX: OK:00:RC Mode:3
+2026-02-28 23:41:24,905 [INFO    ] test_sensor -     ✔ 리스트 응답: count=3, items=['0),Standard', '1),Fast', '2),Slow']
+2026-02-28 23:41:24,905 [INFO    ] test_sensor - >>> Mock 시리얼 OK 응답 수신 테스트
+2026-02-28 23:41:24,906 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM3, Baud: 9600)
+2026-02-28 23:41:24,927 [DEBUG   ] sensor_module - [CR Sensor] TX: RC Firmware
+2026-02-28 23:41:24,927 [DEBUG   ] sensor_module - [CR Sensor] RX: OK:00:RC Firmware:1.25
+2026-02-28 23:41:24,927 [INFO    ] test_sensor -     ✔ 결과: '1.25'
+2026-02-28 23:41:24,927 [INFO    ] test_sensor - >>> Mock 시리얼 명령 전송 형식 테스트
+2026-02-28 23:41:24,928 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM3, Baud: 9600)
+2026-02-28 23:41:24,949 [DEBUG   ] sensor_module - [CR Sensor] TX: RC Firmware
+2026-02-28 23:41:24,949 [DEBUG   ] sensor_module - [CR Sensor] RX: OK:00:RC Firmware:1.25
+2026-02-28 23:41:24,949 [INFO    ] test_sensor -     ✔ 전송 형식: b'RC Firmware\r\n'
+2026-02-28 23:41:24,949 [INFO    ] test_sensor - >>> 순색 XYZ→RGB 방향성 테스트
+2026-02-28 23:41:24,950 [INFO    ] test_sensor -     Red XYZ → RGB = [0.9999, 0.0013, 0.0000]  R이 최대
+2026-02-28 23:41:24,950 [INFO    ] test_sensor -     Green XYZ → RGB = [0.0000, 1.0000, 0.0000]  G가 최대
+2026-02-28 23:41:24,950 [INFO    ] test_sensor -     Blue XYZ → RGB = [0.0009, 0.0000, 1.0000]  B가 최대
+2026-02-28 23:41:24,950 [INFO    ] test_sensor -     ✔ 순색 방향성 모두 정상
+2026-02-28 23:41:24,951 [INFO    ] test_sensor - >>> RGB→XYZ→RGB 왕복 테스트
+2026-02-28 23:41:24,951 [INFO    ] test_sensor -     원본 RGB:  [0.5000, 0.3000, 0.8000]
+2026-02-28 23:41:24,951 [INFO    ] test_sensor -     중간 XYZ:  [0.2255, 0.1411, 0.5943]
+2026-02-28 23:41:24,951 [INFO    ] test_sensor -     복원 RGB:  [0.5039, 0.2949, 0.8048]
+2026-02-28 23:41:24,951 [INFO    ] test_sensor -     최대 차이: 0.005098
+2026-02-28 23:41:24,951 [INFO    ] test_sensor -     ✔ 왕복 변환 오차 0.005098 < 0.15 (합격)
+2026-02-28 23:41:24,951 [INFO    ] test_sensor - >>> XYZ→RGB black 테스트
+2026-02-28 23:41:24,951 [INFO    ] test_sensor -     ✔ Black XYZ → RGB = [0,0,0]
+2026-02-28 23:41:24,951 [INFO    ] test_sensor - >>> XYZ→RGB 클리핑 테스트
+2026-02-28 23:41:24,951 [INFO    ] test_sensor -     과도한 XYZ [2,2,2] → RGB [1.0000, 1.0000, 1.0000] (클리핑됨)
+2026-02-28 23:41:24,951 [INFO    ] test_sensor -     ✔ 클리핑 정상 작동
+2026-02-28 23:41:24,951 [INFO    ] test_sensor - >>> XYZ→RGB 음수 처리 테스트
+2026-02-28 23:41:24,953 [INFO    ] test_sensor -     음수 XYZ [-0.1, 0.5, 0.2] → RGB [0.0000, 1.0000, 0.3556]
+2026-02-28 23:41:24,953 [INFO    ] test_sensor -     ✔ 음수 입력도 안전하게 처리
+2026-02-28 23:41:24,953 [INFO    ] test_sensor - >>> XYZ→RGB D65 white 테스트
+2026-02-28 23:41:24,953 [INFO    ] test_sensor -     D65 XYZ [0.9505, 1.0000, 1.0890] → RGB [1.0000, 1.0000, 1.0000]
+2026-02-28 23:41:24,953 [INFO    ] test_sensor -     ✔ D65 → sRGB ≈ (1,1,1) 확인
+2026-02-28 23:41:24,953 [INFO    ] test_sensor - >>> XYZ→xy near-zero 테스트
+2026-02-28 23:41:24,953 [INFO    ] test_sensor -     ✔ 매우 작은 XYZ도 D65 fallback 적용
+2026-02-28 23:41:24,953 [INFO    ] test_sensor - >>> XYZ→xy 정상 변환 테스트
+2026-02-28 23:41:24,953 [INFO    ] test_sensor -     D65 XYZ → xy = (0.31272, 0.32900)
+2026-02-28 23:41:24,953 [INFO    ] test_sensor -     ✔ 정상 변환 확인
+2026-02-28 23:41:24,953 [INFO    ] test_sensor - >>> XYZ→xy zero fallback 테스트
+2026-02-28 23:41:24,953 [INFO    ] test_sensor -     Zero XYZ → xy = (0.3127, 0.3290) [D65 fallback]
+2026-02-28 23:41:24,953 [INFO    ] test_sensor -     ✔ D65 fallback 정상
+2026-02-28 23:41:24,953 [INFO    ] test_sensor - >>> 프로토콜 상수 검증
+2026-02-28 23:41:24,954 [INFO    ] test_sensor -     ✔ 프로토콜 상수 정상
+2026-02-28 23:41:24,954 [INFO    ] test_sensor - >>> 시리얼 기본값 검증
+2026-02-28 23:41:24,954 [INFO    ] test_sensor -     ✔ 시리얼 기본값 정상 (9600bps, 1.0s timeout, 20ms delay)
+2026-02-28 23:41:24,954 [INFO    ] test_sensor - >>> CRCIEData 테스트
+2026-02-28 23:41:24,954 [INFO    ] test_sensor -     ✔ CRCIEData 정상
+2026-02-28 23:41:24,954 [INFO    ] test_sensor - >>> CRConfiguration 기본값 테스트
+2026-02-28 23:41:24,954 [INFO    ] test_sensor -     ✔ CRConfiguration 기본값 정상
+2026-02-28 23:41:24,955 [INFO    ] test_sensor - >>> CRReading 기본값 테스트
+2026-02-28 23:41:24,955 [INFO    ] test_sensor -     ✔ CRReading 기본값 정상
+2026-02-28 23:41:24,955 [INFO    ] test_sensor - >>> CRSetup 기본값 테스트
+2026-02-28 23:41:24,956 [INFO    ] test_sensor -     ✔ CRSetup 기본값 정상
+2026-02-28 23:41:24,956 [INFO    ] test_sensor - >>> Enum 값 테스트
+2026-02-28 23:41:24,956 [INFO    ] test_sensor -     ✔ Enum 값 정상
+2026-02-28 23:41:24,956 [INFO    ] test_sensor - >>> FlickerSettings 기본값 테스트
+2026-02-28 23:41:24,956 [INFO    ] test_sensor -     ✔ FlickerSettings 기본값 정상
+2026-02-28 23:41:24,956 [INFO    ] test_sensor - >>> ResponseTimeSettings 기본값 테스트
+2026-02-28 23:41:24,956 [INFO    ] test_sensor -     ✔ ResponseTimeSettings 기본값 정상
+2026-02-28 23:41:24,956 [INFO    ] test_sensor - >>> SensorReading 커스텀 값 테스트
+2026-02-28 23:41:24,956 [INFO    ] test_sensor -     ✔ SensorReading 커스텀 값 정상
+2026-02-28 23:41:24,956 [INFO    ] test_sensor - >>> SensorReading 기본값 테스트
+2026-02-28 23:41:24,957 [INFO    ] test_sensor -     ✔ SensorReading 기본값 정상
+2026-02-28 23:41:24,957 [INFO    ] test_sensor - >>> CRSpectrumData 테스트
+2026-02-28 23:41:24,957 [INFO    ] test_sensor -     ✔ CRSpectrumData 정상 (81 데이터 포인트)
+2026-02-28 23:41:24,957 [INFO    ] test_sensor - >>> CRTemporalData 테스트
+2026-02-28 23:41:24,957 [INFO    ] test_sensor -     ✔ CRTemporalData 정상 (100 샘플)
+2026-02-28 23:41:24,957 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,957 [INFO    ] test_sensor - >>> 플리커 대역폭 테스트
+2026-02-28 23:41:24,957 [INFO    ] test_sensor -     ✔ bandwidth = 200.0 Hz
+2026-02-28 23:41:24,957 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,957 [INFO    ] test_sensor - >>> 플리커 필터 차수 테스트
+2026-02-28 23:41:24,958 [INFO    ] test_sensor -     ✔ 유효 범위 내: order=5, 범위 초과 시 무시
+2026-02-28 23:41:24,958 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,958 [INFO    ] test_sensor - >>> 플리커 필터 타입 테스트
+2026-02-28 23:41:24,958 [INFO    ] test_sensor -     ✔ filter_type = LOWPASS
+2026-02-28 23:41:24,958 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,958 [INFO    ] test_sensor - >>> 플리커 주파수 테스트
+2026-02-28 23:41:24,958 [INFO    ] test_sensor -     ✔ frequency = 120.0 Hz
+2026-02-28 23:41:24,958 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,958 [INFO    ] test_sensor - >>> 플리커 최대 검색 주파수 테스트
+2026-02-28 23:41:24,958 [INFO    ] test_sensor -     ✔ max_search_frequency = 60.0 Hz
+2026-02-28 23:41:24,958 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,959 [INFO    ] test_sensor - >>> 응답시간 평균 테스트
+2026-02-28 23:41:24,959 [INFO    ] test_sensor -     ✔ average = 10, 범위 초과 시 무시
+2026-02-28 23:41:24,959 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,959 [INFO    ] test_sensor - >>> 응답시간 클리핑 테스트
+2026-02-28 23:41:24,959 [INFO    ] test_sensor -     ✔ clipping enabled, lo=0.2, hi=0.8
+2026-02-28 23:41:24,960 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,960 [INFO    ] test_sensor - >>> 응답시간 필터 타입 테스트
+2026-02-28 23:41:24,960 [INFO    ] test_sensor -     ✔ filter_type = MOVING_WINDOW_AVERAGE
+2026-02-28 23:41:24,960 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,960 [INFO    ] test_sensor - >>> 응답시간 모드 테스트
+2026-02-28 23:41:24,960 [INFO    ] test_sensor -     ✔ mode = MANUAL
+2026-02-28 23:41:24,960 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,960 [INFO    ] test_sensor - >>> 응답시간 노이즈 레벨 테스트
+2026-02-28 23:41:24,960 [INFO    ] test_sensor -     ✔ noise_level = 0.03
+2026-02-28 23:41:24,960 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,961 [INFO    ] test_sensor - >>> 응답시간 스텝 응답 구간 테스트
+2026-02-28 23:41:24,961 [INFO    ] test_sensor -     ✔ step_zone lo=0.15, hi=0.85
+2026-02-28 23:41:24,961 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,961 [INFO    ] test_sensor - >>> 빈 응답 파싱 테스트
+2026-02-28 23:41:24,961 [INFO    ] test_sensor -     ✔ 빈 응답 파싱 안전하게 처리
+2026-02-28 23:41:24,961 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,961 [INFO    ] test_sensor - >>> ER 응답 파싱 테스트
+2026-02-28 23:41:24,962 [INFO    ] test_sensor -     파싱 결과: {'type': 'ER', 'code': '01', 'command': 'M', 'result': 'Sensor not ready'}
+2026-02-28 23:41:24,962 [INFO    ] test_sensor -     ✔ ER 응답 파싱 정상
+2026-02-28 23:41:24,962 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,962 [INFO    ] test_sensor - >>> 리스트 항목 형식 파싱 테스트
+2026-02-28 23:41:24,962 [INFO    ] test_sensor -     ✔ 리스트 항목 파싱 정상: id=0, name=CIE 1931, type=Standard
+2026-02-28 23:41:24,962 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,963 [INFO    ] test_sensor - >>> OK 응답 파싱 테스트
+2026-02-28 23:41:24,963 [INFO    ] test_sensor -     파싱 결과: {'type': 'OK', 'code': '00', 'command': 'RC Firmware', 'result': '1.23'}
+2026-02-28 23:41:24,963 [INFO    ] test_sensor -     ✔ OK 응답 파싱 정상
+2026-02-28 23:41:24,964 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,964 [INFO    ] test_sensor - >>> 불완전 응답 파싱 테스트
+2026-02-28 23:41:24,964 [INFO    ] test_sensor -     ✔ 불완전 응답도 안전하게 처리
+2026-02-28 23:41:24,964 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,964 [INFO    ] test_sensor - >>> 결과에 콜론 포함 응답 테스트
+2026-02-28 23:41:24,964 [INFO    ] test_sensor -     ✔ 콜론 포함 결과 정상 파싱: '2024:01:15 12:30:45'
+2026-02-28 23:41:24,964 [INFO    ] test_sensor - >>> create_sensor('cr') 테스트
+2026-02-28 23:41:24,964 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM5, Baud: 9600)
+2026-02-28 23:41:24,964 [INFO    ] test_sensor -     ✔ CRColorimeterSensor 생성 정상
+2026-02-28 23:41:24,965 [INFO    ] test_sensor - >>> create_sensor 별칭 테스트
+2026-02-28 23:41:24,965 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM1, Baud: 9600)
+2026-02-28 23:41:24,965 [INFO    ] test_sensor -     ✔ alias='colorimeter' → CRColorimeterSensor
+2026-02-28 23:41:24,965 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM1, Baud: 9600)
+2026-02-28 23:41:24,965 [INFO    ] test_sensor -     ✔ alias='cr100' → CRColorimeterSensor
+2026-02-28 23:41:24,965 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM1, Baud: 9600)
+2026-02-28 23:41:24,965 [INFO    ] test_sensor -     ✔ alias='cr250' → CRColorimeterSensor
+2026-02-28 23:41:24,965 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM1, Baud: 9600)
+2026-02-28 23:41:24,966 [INFO    ] test_sensor -     ✔ alias='cr300' → CRColorimeterSensor
+2026-02-28 23:41:24,966 [INFO    ] test_sensor - >>> create_sensor 잘못된 타입 테스트
+2026-02-28 23:41:24,966 [INFO    ] test_sensor -     ✔ ValueError 발생 확인
+2026-02-28 23:41:24,966 [INFO    ] test_sensor - >>> create_sensor('virtual') 기본 노이즈 테스트
+2026-02-28 23:41:24,966 [INFO    ] test_sensor -     ✔ 기본 noise_level = 0.02
+2026-02-28 23:41:24,966 [INFO    ] test_sensor - >>> create_sensor('virtual') 테스트
+2026-02-28 23:41:24,966 [INFO    ] test_sensor -     ✔ VirtualSensor 생성 정상
+2026-02-28 23:41:24,966 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,966 [INFO    ] test_sensor - >>> set_accessory 테스트
+2026-02-28 23:41:24,967 [INFO    ] test_sensor -     ✔ accessory_id = 1 (CRL-100)
+2026-02-28 23:41:24,967 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,967 [INFO    ] test_sensor - >>> set_aperture 테스트
+2026-02-28 23:41:24,967 [INFO    ] test_sensor -     ✔ aperture_id = 0
+2026-02-28 23:41:24,967 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,967 [INFO    ] test_sensor - >>> set_cmf 테스트
+2026-02-28 23:41:24,967 [INFO    ] test_sensor -     ✔ cmf = 1
+2026-02-28 23:41:24,967 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,967 [INFO    ] test_sensor - >>> set_exposure 테스트
+2026-02-28 23:41:24,967 [INFO    ] test_sensor -     ✔ exposure = 50.0 msec
+2026-02-28 23:41:24,967 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,968 [INFO    ] test_sensor - >>> set_exposure_mode 테스트
+2026-02-28 23:41:24,968 [INFO    ] test_sensor -     ✔ exposure_mode_id = 1 (Manual)
+2026-02-28 23:41:24,968 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,968 [INFO    ] test_sensor - >>> set_exposure 범위 초과 테스트
+2026-02-28 23:41:24,968 [INFO    ] test_sensor -     ✔ 범위 초과 시 변경 없음
+2026-02-28 23:41:24,968 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,968 [INFO    ] test_sensor - >>> set_mode 테스트
+2026-02-28 23:41:24,968 [INFO    ] test_sensor -     ✔ mode_id = 1 (Fast)
+2026-02-28 23:41:24,968 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,968 [INFO    ] test_sensor - >>> set_mode 범위 초과 테스트
+2026-02-28 23:41:24,969 [INFO    ] test_sensor -     ✔ 범위 초과 시 변경 없음
+2026-02-28 23:41:24,969 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,969 [INFO    ] test_sensor - >>> set_range_mode 테스트
+2026-02-28 23:41:24,969 [INFO    ] test_sensor -     ✔ range_mode_id = 0 (Auto)
+2026-02-28 23:41:24,969 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,969 [INFO    ] test_sensor - >>> set_sampling_rate 테스트
+2026-02-28 23:41:24,969 [INFO    ] test_sensor -     ✔ sampling_rate = 48000.0 Hz
+2026-02-28 23:41:24,969 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,970 [INFO    ] test_sensor - >>> set_speed 테스트
+2026-02-28 23:41:24,970 [INFO    ] test_sensor -     ✔ speed_id = 2 (Slow)
+2026-02-28 23:41:24,970 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,970 [INFO    ] test_sensor - >>> set_sync_freq 테스트
+2026-02-28 23:41:24,970 [INFO    ] test_sensor -     ✔ sync_freq = 120.0 Hz
+2026-02-28 23:41:24,970 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,970 [INFO    ] test_sensor - >>> set_sync_freq 범위 초과 테스트
+2026-02-28 23:41:24,970 [INFO    ] test_sensor -     ✔ 범위 초과 시 변경 없음
+2026-02-28 23:41:24,971 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,971 [INFO    ] test_sensor - >>> set_sync_mode 테스트
+2026-02-28 23:41:24,971 [INFO    ] test_sensor -     ✔ sync_mode_id = 1 (External)
+2026-02-28 23:41:24,971 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,971 [INFO    ] test_sensor - >>> _find_id_by_name 테스트
+2026-02-28 23:41:24,971 [INFO    ] test_sensor -     ✔ 이름→ID 검색 정상
+2026-02-28 23:41:24,971 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,971 [INFO    ] test_sensor - >>> _firmware_version_number 테스트
+2026-02-28 23:41:24,971 [INFO    ] test_sensor -     ✔ 펌웨어 버전 숫자 변환 정상
+2026-02-28 23:41:24,971 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,971 [INFO    ] test_sensor - >>> get_device_info 테스트
+2026-02-28 23:41:24,971 [INFO    ] test_sensor -     ✔ 기기 정보: {'id': 'SN12345', 'model': 'CR-300', 'firmware': '1.25', 'instrument_type': '3', 'port': 'COM99', 'modes': '1', 'accessories': '0'}
+2026-02-28 23:41:24,972 [INFO    ] sensor_module - [CR Sensor] Initialized (Port: COM99, Baud: 9600)
+2026-02-28 23:41:24,972 [INFO    ] test_sensor - >>> 측정 카운트 테스트
+2026-02-28 23:41:24,972 [INFO    ] test_sensor -     ✔ 측정 카운트 관리 정상
+2026-02-28 23:41:24,984 [INFO    ] test_sensor - >>> VirtualSensor 연결/해제 테스트
+2026-02-28 23:41:25,085 [INFO    ] test_sensor -     ✔ 연결 성공
+2026-02-28 23:41:25,086 [INFO    ] test_sensor -     ✔ 연결 해제 성공
+2026-02-28 23:41:25,086 [INFO    ] test_sensor - >>> VirtualSensor 초기 상태 테스트
+2026-02-28 23:41:25,086 [INFO    ] test_sensor -     ✔ 초기 상태: 미연결, 측정 0회
+2026-02-28 23:41:25,087 [INFO    ] test_sensor - >>> VirtualSensor 측정 카운트 테스트
+2026-02-28 23:41:26,191 [INFO    ] test_sensor -     ✔ 5회 측정 후 카운트 = 5
+2026-02-28 23:41:26,192 [INFO    ] test_sensor -     ✔ 카운트 리셋 성공
+2026-02-28 23:41:26,193 [INFO    ] test_sensor - >>> VirtualSensor 다수 측정 변동 테스트
+2026-02-28 23:41:28,304 [INFO    ] test_sensor -     ✔ 10회 측정 중 10개 고유값 (노이즈 동작 확인)
+2026-02-28 23:41:28,304 [INFO    ] test_sensor - >>> VirtualSensor 노이즈 레벨 영향 테스트
+2026-02-28 23:41:48,594 [INFO    ] test_sensor -     Low noise std=0.251071, High noise std=0.261751
+2026-02-28 23:41:48,594 [INFO    ] test_sensor -     ✔ 모든 측정값이 [0,1] 범위 내 유지
+2026-02-28 23:41:48,594 [INFO    ] test_sensor - >>> VirtualSensor 측정 테스트 (연결됨)
+2026-02-28 23:41:48,896 [INFO    ] test_sensor -     ✔ 측정값 유효: RGB=[0.3523,0.9571,0.7376] xy=(0.2601,0.4015) Y=76.67
+2026-02-28 23:41:48,897 [INFO    ] test_sensor - >>> VirtualSensor 측정 테스트 (미연결)
+2026-02-28 23:41:48,897 [INFO    ] test_sensor -     ✔ 미연결 시 is_valid=False, 에러 메시지 정상
+2026-02-28 23:41:48,897 [INFO    ] test_sensor - >>> VirtualSensor RGB→XYZ 변환 테스트
+2026-02-28 23:41:48,897 [INFO    ] test_sensor -     White (1,1,1) → XYZ = [0.9505, 1.0000, 1.0888]
+2026-02-28 23:41:48,898 [INFO    ] test_sensor -     Black (0,0,0) → XYZ = [0.0000, 0.0000, 0.0000]
+2026-02-28 23:41:48,898 [INFO    ] test_sensor -     Red (1,0,0) → XYZ = [0.4125, 0.2127, 0.0193]
+2026-02-28 23:41:48,898 [INFO    ] test_sensor -     ✔ RGB→XYZ 변환 정상
+2026-02-28 23:41:48,898 [INFO    ] test_sensor - >>> VirtualSensor XYZ→xy 변환 테스트
+2026-02-28 23:41:48,898 [INFO    ] test_sensor -     D65 XYZ → xy = (0.3127, 0.3290)  [기대: ~(0.3127, 0.3290)]
+2026-02-28 23:41:48,899 [INFO    ] test_sensor -     Zero XYZ → xy = (0.3127, 0.3290) [D65 fallback]
+2026-02-28 23:41:48,899 [INFO    ] test_sensor -     ✔ XYZ→xy 변환 정상

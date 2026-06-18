@@ -1,0 +1,23 @@
+{
+  "name": "Deep Ocean",
+  "bg": "#010e1a",
+  "surface": "#051928",
+  "surface2": "#0a2540",
+  "surface_raised": "#0c2d4a",
+  "surface_sunken": "#000810",
+  "sidebar_bg": "#010e1a",
+  "topbar_bg": "#031420",
+  "border": "#0a2540",
+  "border_subtle": "#051928",
+  "text": "#cdd9e5",
+  "text_dim": "#5c8aad",
+  "text_muted": "#2a4a68",
+  "accent": "#00b4d8",
+  "accent2": "#0096c7",
+  "accent_subtle": "#082e3d",
+  "green": "#52b788",
+  "red": "#e63946",
+  "amber": "#f4a261",
+  "blue": "#48cae4",
+  "purple": "#a8dadc"
+}

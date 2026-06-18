@@ -1,0 +1,22 @@
+# Color Calibration System - Python Dependencies
+# CR-300 Colorimeter Integration with Color Analysis GUI
+
+# Core Scientific Libraries
+numpy>=1.24.0
+matplotlib>=3.7.0
+
+# Serial Communication (CR-300 Colorimeter)
+pyserial>=3.5
+
+# Standard Library (included with Python 3.12+)
+# - tkinter (GUI file dialogs)
+# - dataclasses (Python 3.7+)
+# - typing (Python 3.5+)
+# - enum (Python 3.4+)
+# - threading (built-in)
+# - logging (built-in)
+# - time (built-in)
+# - sys (built-in)
+# - os (built-in)
+# - json (built-in)
+# - abc (built-in)

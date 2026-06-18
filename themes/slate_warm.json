@@ -1,0 +1,23 @@
+{
+  "name": "Slate Warm",
+  "bg": "#2b2d31",
+  "surface": "#313338",
+  "surface2": "#383a40",
+  "surface_raised": "#3b3d44",
+  "surface_sunken": "#232428",
+  "sidebar_bg": "#2b2d31",
+  "topbar_bg": "#1e1f22",
+  "border": "#404249",
+  "border_subtle": "#383a40",
+  "text": "#dbdee1",
+  "text_dim": "#b5bac1",
+  "text_muted": "#72767d",
+  "accent": "#5865f2",
+  "accent2": "#4752c4",
+  "accent_subtle": "#3c3f6e",
+  "green": "#3ba55c",
+  "red": "#ed4245",
+  "amber": "#faa61a",
+  "blue": "#5865f2",
+  "purple": "#9c84ef"
+}

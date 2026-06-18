@@ -1,0 +1,23 @@
+{
+  "name": "Light Studio",
+  "bg": "#f6f8fa",
+  "surface": "#ffffff",
+  "surface2": "#eaeef2",
+  "surface_raised": "#ffffff",
+  "surface_sunken": "#eaeef2",
+  "sidebar_bg": "#f0f2f5",
+  "topbar_bg": "#f8f9fb",
+  "border": "#e1e4e8",
+  "border_subtle": "#eaeef2",
+  "text": "#1f2328",
+  "text_dim": "#57606a",
+  "text_muted": "#afb8c1",
+  "accent": "#0969da",
+  "accent2": "#0550ae",
+  "accent_subtle": "#ddf4ff",
+  "green": "#1a7f37",
+  "red": "#cf222e",
+  "amber": "#9a6700",
+  "blue": "#0969da",
+  "purple": "#8250df"
+}

@@ -1,0 +1,23 @@
+{
+  "name": "Dark Pro",
+  "bg": "#0d1117",
+  "surface": "#161b22",
+  "surface2": "#21262d",
+  "surface_raised": "#1c2333",
+  "surface_sunken": "#080c14",
+  "sidebar_bg": "#0d1117",
+  "topbar_bg": "#111820",
+  "border": "#21262d",
+  "border_subtle": "#161b22",
+  "text": "#e6edf3",
+  "text_dim": "#8b949e",
+  "text_muted": "#484f58",
+  "accent": "#3a86ff",
+  "accent2": "#1a6fd4",
+  "accent_subtle": "#1a3a6d",
+  "green": "#3fb950",
+  "red": "#f85149",
+  "amber": "#d29922",
+  "blue": "#58a6ff",
+  "purple": "#bc8cff"
+}

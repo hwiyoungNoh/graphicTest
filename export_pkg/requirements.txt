@@ -1,0 +1,9 @@
+# Core runtime deps for the exported subsystems.
+# tkinter is Python stdlib (no pip install) but is imported at module load by
+# device_tv_control_panel.py / device_connect.py — see README "Caveats".
+
+numpy
+opencv-python        # cv2 — pattern generation
+paramiko             # TV/Mac SSH (TVSSHClient, _mac_* tools)
+websocket-client     # TV WebSocket (SSAP) path  -> imported as `websocket`
+Pillow               # screenshot decode (optional, capture paths)

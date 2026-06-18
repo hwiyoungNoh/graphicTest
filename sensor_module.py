@@ -23,6 +23,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Tuple, Optional, List, Dict, Any
 from enum import IntEnum
+import re
 import time
 import threading
 import logging
@@ -156,7 +157,7 @@ class CRSetup:
     aperture_id: int = 0
     range_mode_id: int = 0
     range_id: int = 0
-    speed_id: int = 0
+    speed_id: int = 1  # 기본값: 1 = 2x Fast (가장 빠른 속도)
     exposure_mode_id: int = 0
     exposure: float = 0.0
     max_auto_exposure: float = 0.0
@@ -403,10 +404,40 @@ class CRColorimeterSensor(SensorInterface):
             self._connected = True
             logger.info("[CR Sensor] Serial port opened: %s", self.port)
 
-            # 펌웨어 버전 → 구성 → 설정 순서로 다운로드
-            self._download_version()
-            self._download_configuration()
-            self._download_setup()
+            # ── Liveness probe (잘못된 COM 포트 빠른 실패) ──────────────
+            # 잘못된/유휴 COM 포트도 open 은 성공하지만 응답이 없다. 이 체크가
+            # 없으면 connect() 가 RC/RS 설정 명령 ~15개를 각 5초 타임아웃으로
+            # 줄줄이 보내며 수십 초 멈췄다가 그래도 True 를 반환한다. RC Firmware
+            # 를 짧은 타임아웃으로 두어 번 질의해 무응답이면 즉시 실패 반환 →
+            # UI 가 실패 팝업을 띄우고 사용자가 다른 포트를 고를 수 있게 한다.
+            firmware = self._probe_firmware(attempts=2, timeout=2.0)
+            if firmware is None:
+                logger.error("[CR Sensor] %s 가 열렸지만 센서가 응답하지 않습니다 "
+                             "(잘못된 COM 포트?). connect 중단.", self.port)
+                self._connected = False
+                try:
+                    if self._serial and self._serial.is_open:
+                        self._serial.close()
+                finally:
+                    self._serial = None
+                return False
+            self.configuration.firmware = firmware
+            logger.info("[CR Sensor] Firmware: %s", firmware)
+
+            try:
+                self._download_configuration()
+            except Exception as e:
+                logger.warning("[CR Sensor] Configuration download failed: %s (continuing...)", e)
+                # 최소 구성 정보 설정
+                if not self.configuration.model:
+                    self.configuration.model = "Unknown Model"
+                if not self.configuration.id:
+                    self.configuration.id = "Unknown ID"
+
+            try:
+                self._download_setup()
+            except Exception as e:
+                logger.warning("[CR Sensor] Setup download failed: %s (continuing...)", e)
 
             logger.info(
                 "[CR Sensor] Connected! Model: %s, FW: %s, ID: %s",
@@ -466,14 +497,20 @@ class CRColorimeterSensor(SensorInterface):
             self._serial.flush()
             time.sleep(CR_COMMAND_DELAY)
 
-            logger.debug("[CR Sensor] TX: %s", command)
+            # 상세 송신 로그
+            logger.info("[CR Sensor] >>> TX: %s (timeout=%.1fs)", command, timeout)
 
             old_timeout = self._serial.timeout
             self._serial.timeout = timeout
             response = self._read_response(command)
             self._serial.timeout = old_timeout
 
-            logger.debug("[CR Sensor] RX: %s", response.strip())
+            # 상세 수신 로그
+            if response:
+                logger.info("[CR Sensor] <<< RX: %s", response.strip()[:100])
+            else:
+                logger.warning("[CR Sensor] <<< RX: (EMPTY - timeout?)")
+            
             return response
 
     def _read_response(self, sent_command: str = "") -> str:
@@ -482,9 +519,16 @@ class CRColorimeterSensor(SensorInterface):
         에코 프롬프트('>') 및 명령 에코는 무시합니다.
         """
         response_lines = []
+        blank_retries = 0
         while True:
             line = self._serial.readline().decode('ascii', errors='replace').strip()
             if not line:
+                # OK/ER 헤더를 받기 전의 순간 빈 줄(시리얼 청킹/지연)은 곧바로
+                # 끝으로 간주하지 않고 잠깐 더 기다린다 — 멀티라인 리스트 응답
+                # (RC Speed/RC ExposureMode)의 헤더를 놓치지 않기 위함.
+                if not response_lines and blank_retries < 3:
+                    blank_retries += 1
+                    continue
                 break
 
             # 에코 프롬프트 무시
@@ -506,24 +550,30 @@ class CRColorimeterSensor(SensorInterface):
         return "\n".join(response_lines) if response_lines else ""
 
     def _read_multi_line_response(self, num_lines: int,
-                                  timeout: float = 2.0) -> List[str]:
+                                  timeout: float = 5.0) -> List[str]:
         """
         다중 라인 응답을 읽습니다 (리스트 응답용).
 
-        Args:
-            num_lines: 읽어야 할 추가 라인 수
-            timeout: 라인 당 타임아웃
+        SDK(ProcessResponses)는 헤더+N개 항목 라인이 모두 버퍼에 들어올 때까지
+        기다렸다 파싱한다. 동기 포트에서도 이를 흉내 내어, num_lines 개의
+        '비어있지 않은' 항목 라인을 모을 때까지(또는 전체 deadline 까지) 계속
+        읽는다 — 한 줄이 타임아웃돼도 드롭/포기하지 않고 재시도(이전 구현은
+        타임아웃 라인을 조용히 버려 목록이 비거나 짧아졌음).
         """
-        lines = []
+        lines: List[str] = []
         old_timeout = self._serial.timeout
-        self._serial.timeout = timeout
-
-        for _ in range(num_lines):
-            line = self._serial.readline().decode('ascii', errors='replace').strip()
-            if line:
+        self._serial.timeout = 0.5  # 짧은 per-readline → deadline 기반 루프
+        end = time.time() + max(float(timeout), 3.0)
+        try:
+            while len(lines) < num_lines and time.time() < end:
+                line = self._serial.readline().decode('ascii', errors='replace').strip()
+                if not line:
+                    continue  # 타임아웃 — deadline 까지 항목 라인을 계속 기다림
+                if line.startswith('>'):
+                    continue  # 에코 프롬프트 무시
                 lines.append(line)
-
-        self._serial.timeout = old_timeout
+        finally:
+            self._serial.timeout = old_timeout
         return lines
 
     def _parse_response(self, response: str) -> Dict[str, str]:
@@ -555,7 +605,12 @@ class CRColorimeterSensor(SensorInterface):
 
     def _send_and_get_result(self, command: str,
                              timeout: float = 5.0) -> str:
-        """명령을 전송하고 result 값만 반환합니다."""
+        """
+        명령을 전송하고 result 값만 반환합니다.
+        
+        Note: RM 명령은 측정 데이터 읽기이므로 충분한 타임아웃 필요
+        C++ SDK에서는 각 명령마다 타임아웃 설정 가능
+        """
         parsed = self._send_and_parse(command, timeout=timeout)
         return parsed.get('result', '')
 
@@ -566,9 +621,51 @@ class CRColorimeterSensor(SensorInterface):
         result → 항목 수, 이후 각 라인이 항목입니다.
         """
         parsed = self._send_and_parse(command, timeout=timeout)
-        count = int(parsed['result'])
-        items = self._read_multi_line_response(count, timeout=timeout) if count > 0 else []
+        raw = (parsed.get('result') or '').strip()
+        # 선행 정수만 안전 파싱 — 비거나 비정수면 count=0 (int() 예외로 목록이
+        # 통째로 []가 되던 문제 방지). 진단을 위해 raw 를 로깅.
+        m = re.match(r'\s*(\d+)', raw)
+        count = int(m.group(1)) if m else 0
+        if count <= 0:
+            logger.info("[CR Sensor] %s -> count=0 (raw result=%r)", command, raw)
+            return count, []
+        items = self._read_multi_line_response(count, timeout=timeout)
+        logger.info("[CR Sensor] %s -> count=%d, received %d items: %r",
+                    command, count, len(items), items)
         return count, items
+
+    @staticmethod
+    def _split_list_item(item: str) -> List[str]:
+        """리스트 항목 라인을 토큰으로 분리.
+
+        SDK 는 RESULT_SEPARATOR 를 CString::Tokenize 로 처리 — '(' ')' ',' 를
+        각각 구분자로 보고 빈 토큰을 버린다. 따라서 "0),Slow" 와 "(0),(Slow)"
+        둘 다 ["0","Slow"] 가 된다. 기존 split("),") 는 후자에서 깨졌으므로
+        (["(0","(Slow)"] → int("(0") 실패) 동일하게 토큰화한다.
+        """
+        return [p for p in re.split(r'[(),]+', item.strip()) if p]
+
+    def _probe_firmware(self, attempts: int = 2, timeout: float = 2.0):
+        """연결 직후 센서 생존 확인 (잘못된 COM 포트 빠른 실패용).
+
+        RC Firmware 를 짧은 타임아웃으로 최대 attempts 회 질의해 첫 비어있지 않은
+        응답이 오면 펌웨어 문자열을, 끝까지 무응답이면 None 을 반환한다. (정상
+        센서는 RC Firmware 에 1초 내 응답 — 측정이 아니라 캐시된 문자열 읽기.)
+        """
+        for i in range(1, attempts + 1):
+            try:
+                fw = self._send_and_get_result("RC Firmware", timeout=timeout)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[CR Sensor] liveness probe %d/%d error: %s",
+                               i, attempts, e)
+                fw = ""
+            if fw and fw.strip():
+                logger.info("[CR Sensor] liveness probe %d/%d OK (fw=%s)",
+                            i, attempts, fw.strip())
+                return fw
+            logger.warning("[CR Sensor] liveness probe %d/%d: 응답 없음 "
+                           "(timeout=%.1fs)", i, attempts, timeout)
+        return None
 
     # ------------------------------------------------------------------
     # Configuration Download  (RC 명령 세트)
@@ -588,108 +685,159 @@ class CRColorimeterSensor(SensorInterface):
             return 0.0
 
     def _download_configuration(self):
-        """센서 구성 정보 전체 다운로드 (RC 명령 세트)"""
+        """센서 구성 정보 전체 다운로드 (RC 명령 세트)
+        
+        선택적 다운로드: 지원되지 않는 항목은 skip하고 계속 진행
+        (SOM10 같은 제한된 기능 센서 호환성을 위해)
+        """
 
-        self.configuration.id = self._send_and_get_result("RC ID")
-        self.configuration.model = self._send_and_get_result("RC Model")
+        # 필수 항목: ID, Model
+        try:
+            self.configuration.id = self._send_and_get_result("RC ID")
+        except Exception as e:
+            logger.warning("[CR Sensor] RC ID failed: %s (using default)", e)
+            self.configuration.id = "N/A"
 
+        try:
+            self.configuration.model = self._send_and_get_result("RC Model")
+        except Exception as e:
+            logger.warning("[CR Sensor] RC Model failed: %s (using default)", e)
+            self.configuration.model = "Unknown"
+
+        # 선택적 항목: InstrumentType
         version = self._firmware_version_number()
         if version >= 1.17:
             try:
                 self.configuration.instrument_type = int(
                     self._send_and_get_result("RC InstrumentType"))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("[CR Sensor] RC InstrumentType not available: %s", e)
 
-        # --- 리스트 항목들 ---
+        # --- 리스트 항목들 (선택적) ---
 
         # Accessories  (항목 형식: "ID),Name),Type")
-        count, items = self._send_and_get_list("RC Accessory")
-        self.configuration.accessories = []
-        for item in items:
-            parts = item.split("),")
-            if len(parts) >= 3:
-                self.configuration.accessories.append(
-                    CRAccessoryItem(id=int(parts[0]), name=parts[1], type=parts[2]))
+        try:
+            count, items = self._send_and_get_list("RC Accessory")
+            self.configuration.accessories = []
+            for item in items:
+                parts = self._split_list_item(item)
+                if len(parts) >= 3:
+                    self.configuration.accessories.append(
+                        CRAccessoryItem(id=int(parts[0]), name=parts[1], type=parts[2]))
+        except Exception as e:
+            logger.debug("[CR Sensor] RC Accessory not available: %s", e)
+            self.configuration.accessories = []
 
         # Filters  ("ID),Name),Type")
-        count, items = self._send_and_get_list("RC Filter")
-        self.configuration.filters = []
-        for item in items:
-            parts = item.split("),")
-            if len(parts) >= 3:
-                self.configuration.filters.append(
-                    CRFilterItem(id=int(parts[0]), name=parts[1], type=parts[2]))
+        try:
+            count, items = self._send_and_get_list("RC Filter")
+            self.configuration.filters = []
+            for item in items:
+                parts = self._split_list_item(item)
+                if len(parts) >= 3:
+                    self.configuration.filters.append(
+                        CRFilterItem(id=int(parts[0]), name=parts[1], type=parts[2]))
+        except Exception as e:
+            logger.debug("[CR Sensor] RC Filter not available: %s", e)
+            self.configuration.filters = []
 
         # Apertures  ("ID),Name")
-        count, items = self._send_and_get_list("RC Aperture")
-        self.configuration.apertures = []
-        for item in items:
-            parts = item.split("),")
-            if len(parts) >= 2:
-                self.configuration.apertures.append(
-                    CRModeItem(id=int(parts[0]), name=parts[1]))
+        try:
+            count, items = self._send_and_get_list("RC Aperture")
+            self.configuration.apertures = []
+            for item in items:
+                parts = self._split_list_item(item)
+                if len(parts) >= 2:
+                    self.configuration.apertures.append(
+                        CRModeItem(id=int(parts[0]), name=parts[1]))
+        except Exception as e:
+            logger.debug("[CR Sensor] RC Aperture not available: %s", e)
+            self.configuration.apertures = []
 
-        # Modes
-        count, items = self._send_and_get_list("RC Mode")
-        self.configuration.modes = []
-        for item in items:
-            parts = item.split("),")
-            if len(parts) >= 2:
-                self.configuration.modes.append(
-                    CRModeItem(id=int(parts[0]), name=parts[1]))
+        # Modes — ★ SOM10에서 실패하는 명령
+        try:
+            count, items = self._send_and_get_list("RC Mode")
+            self.configuration.modes = []
+            for item in items:
+                parts = self._split_list_item(item)
+                if len(parts) >= 2:
+                    self.configuration.modes.append(
+                        CRModeItem(id=int(parts[0]), name=parts[1]))
+        except Exception as e:
+            logger.debug("[CR Sensor] RC Mode not available: %s (sensor may have limited features)", e)
+            self.configuration.modes = []
 
         # Exposure Modes
-        count, items = self._send_and_get_list("RC ExposureMode")
-        self.configuration.exposure_modes = []
-        for item in items:
-            parts = item.split("),")
-            if len(parts) >= 2:
-                self.configuration.exposure_modes.append(
-                    CRModeItem(id=int(parts[0]), name=parts[1]))
+        try:
+            count, items = self._send_and_get_list("RC ExposureMode")
+            self.configuration.exposure_modes = []
+            for item in items:
+                parts = self._split_list_item(item)
+                if len(parts) >= 2:
+                    self.configuration.exposure_modes.append(
+                        CRModeItem(id=int(parts[0]), name=parts[1]))
+        except Exception as e:
+            logger.info("[CR Sensor] RC ExposureMode list unavailable/parse failed: %s", e)
+            self.configuration.exposure_modes = []
 
         # Range Modes
-        count, items = self._send_and_get_list("RC RangeMode")
-        self.configuration.range_modes = []
-        for item in items:
-            parts = item.split("),")
-            if len(parts) >= 2:
-                self.configuration.range_modes.append(
-                    CRModeItem(id=int(parts[0]), name=parts[1]))
+        try:
+            count, items = self._send_and_get_list("RC RangeMode")
+            self.configuration.range_modes = []
+            for item in items:
+                parts = self._split_list_item(item)
+                if len(parts) >= 2:
+                    self.configuration.range_modes.append(
+                        CRModeItem(id=int(parts[0]), name=parts[1]))
+        except Exception as e:
+            logger.debug("[CR Sensor] RC RangeMode not available: %s", e)
+            self.configuration.range_modes = []
 
         # Ranges
-        count, items = self._send_and_get_list("RC Range")
-        self.configuration.ranges = []
-        for item in items:
-            parts = item.split("),")
-            if len(parts) >= 2:
-                self.configuration.ranges.append(
-                    CRModeItem(id=int(parts[0]), name=parts[1]))
+        try:
+            count, items = self._send_and_get_list("RC Range")
+            self.configuration.ranges = []
+            for item in items:
+                parts = self._split_list_item(item)
+                if len(parts) >= 2:
+                    self.configuration.ranges.append(
+                        CRModeItem(id=int(parts[0]), name=parts[1]))
+        except Exception as e:
+            logger.debug("[CR Sensor] RC Range not available: %s", e)
+            self.configuration.ranges = []
 
         # Speeds
-        count, items = self._send_and_get_list("RC Speed")
-        self.configuration.speeds = []
-        for item in items:
-            parts = item.split("),")
-            if len(parts) >= 2:
-                self.configuration.speeds.append(
-                    CRModeItem(id=int(parts[0]), name=parts[1]))
+        try:
+            count, items = self._send_and_get_list("RC Speed")
+            self.configuration.speeds = []
+            for item in items:
+                parts = self._split_list_item(item)
+                if len(parts) >= 2:
+                    self.configuration.speeds.append(
+                        CRModeItem(id=int(parts[0]), name=parts[1]))
+        except Exception as e:
+            logger.info("[CR Sensor] RC Speed list unavailable/parse failed: %s", e)
+            self.configuration.speeds = []
 
         # Sync Modes
-        count, items = self._send_and_get_list("RC SyncMode")
-        self.configuration.sync_modes = []
-        for item in items:
-            parts = item.split("),")
-            if len(parts) >= 2:
-                self.configuration.sync_modes.append(
-                    CRModeItem(id=int(parts[0]), name=parts[1]))
+        try:
+            count, items = self._send_and_get_list("RC SyncMode")
+            self.configuration.sync_modes = []
+            for item in items:
+                parts = self._split_list_item(item)
+                if len(parts) >= 2:
+                    self.configuration.sync_modes.append(
+                        CRModeItem(id=int(parts[0]), name=parts[1]))
+        except Exception as e:
+            logger.debug("[CR Sensor] RC SyncMode not available: %s", e)
+            self.configuration.sync_modes = []
 
         # Matrix Modes (deprecated but still supported)
         try:
             count, items = self._send_and_get_list("RC MatrixMode")
             self.configuration.matrix_modes = []
             for item in items:
-                parts = item.split("),")
+                parts = self._split_list_item(item)
                 if len(parts) >= 2:
                     self.configuration.matrix_modes.append(
                         CRModeItem(id=int(parts[0]), name=parts[1]))
@@ -701,7 +849,7 @@ class CRColorimeterSensor(SensorInterface):
             count, items = self._send_and_get_list("RC UserCalibMode")
             self.configuration.user_calib_modes = []
             for item in items:
-                parts = item.split("),")
+                parts = self._split_list_item(item)
                 if len(parts) >= 2:
                     self.configuration.user_calib_modes.append(
                         CRModeItem(id=int(parts[0]), name=parts[1]))
@@ -713,7 +861,7 @@ class CRColorimeterSensor(SensorInterface):
             count, items = self._send_and_get_list("RC Match")
             self.configuration.match_set = []
             for item in items:
-                parts = item.split("),")
+                parts = self._split_list_item(item)
                 if len(parts) >= 2:
                     self.configuration.match_set.append(
                         CRModeItem(id=int(parts[0]), name=parts[1]))
@@ -819,19 +967,33 @@ class CRColorimeterSensor(SensorInterface):
             self.setup_modified.filter3_id = self.setup.filter3_id
 
             # 단순 name→id 매핑 항목들
+            # ★ SOM10 대응: configuration 리스트가 비어있으면 RC에서 ID를 직접 가져옴
             _simple_map = [
-                ('aperture_id',       'RS Aperture',      self.configuration.apertures),
-                ('mode_id',           'RS Mode',          self.configuration.modes),
-                ('range_mode_id',     'RS RangeMode',     self.configuration.range_modes),
-                ('range_id',          'RS Range',         self.configuration.ranges),
-                ('speed_id',          'RS Speed',         self.configuration.speeds),
-                ('exposure_mode_id',  'RS ExposureMode',  self.configuration.exposure_modes),
-                ('sync_mode_id',      'RS SyncMode',      self.configuration.sync_modes),
+                ('aperture_id',       'RS Aperture',      self.configuration.apertures,      'RC Aperture'),
+                ('mode_id',           'RS Mode',          self.configuration.modes,          'RC Mode'),
+                ('range_mode_id',     'RS RangeMode',     self.configuration.range_modes,    'RC RangeMode'),
+                ('range_id',          'RS Range',         self.configuration.ranges,         'RC Range'),
+                ('speed_id',          'RS Speed',         self.configuration.speeds,         'RC Speed'),
+                ('exposure_mode_id',  'RS ExposureMode',  self.configuration.exposure_modes, 'RC ExposureMode'),
+                ('sync_mode_id',      'RS SyncMode',      self.configuration.sync_modes,     'RC SyncMode'),
             ]
-            for attr, cmd, collection in _simple_map:
+            for attr, rs_cmd, collection, rc_cmd in _simple_map:
                 try:
-                    result = self._send_and_get_result(cmd)
+                    result = self._send_and_get_result(rs_cmd)
                     val = self._find_id_by_name(collection, result)
+                    
+                    # ★ configuration 리스트가 비어서 ID를 찾지 못했으면 RC에서 직접 가져오기
+                    if val == -1 and len(collection) == 0:
+                        try:
+                            rc_result = self._send_and_get_result(rc_cmd)
+                            # RC 응답이 숫자면 직접 사용
+                            if rc_result.isdigit():
+                                val = int(rc_result)
+                                logger.info("[CR Sensor] Using RC %s=%d (configuration list empty)", 
+                                          attr, val)
+                        except Exception as e:
+                            logger.debug("[CR Sensor] Could not get %s from RC: %s", rc_cmd, e)
+                    
                     setattr(self.setup, attr, val)
                     setattr(self.setup_modified, attr, val)
                 except Exception:
@@ -977,11 +1139,54 @@ class CRColorimeterSensor(SensorInterface):
         """
         측정 명령(M)을 전송합니다.
         upload_setup() 로 변경 설정 반영 후 측정을 시작합니다.
+        
+        Note: C++ SDK에서는 M 명령에 30초 타임아웃 사용
+        실제 측정은 노출 시간, 속도 설정 등에 따라 시간이 오래 걸릴 수 있음
         """
         try:
+            # Helper: ID에서 이름 가져오기
+            def get_name(id_val, mode_list):
+                if id_val < 0:
+                    return "NOT_SET"
+                for item in mode_list:
+                    if item.id == id_val:
+                        return item.name
+                return f"ID={id_val}"
+            
+            # 현재 설정 표시
+            logger.info("="*60)
+            logger.info("[CR Sensor] CAPTURE START")
+            logger.info("  Current Settings:")
+            logger.info("    Exposure Mode: %s (ID=%d)", 
+                       get_name(self.setup.exposure_mode_id, self.configuration.exposure_modes),
+                       self.setup.exposure_mode_id)
+            logger.info("    Exposure: %s ms", self.setup.exposure)
+            logger.info("    Max Auto Exposure: %s ms", self.setup.max_auto_exposure)
+            logger.info("    Speed: %s (ID=%d)", 
+                       get_name(self.setup.speed_id, self.configuration.speeds),
+                       self.setup.speed_id)
+            logger.info("    Range Mode: %s (ID=%d)", 
+                       get_name(self.setup.range_mode_id, self.configuration.range_modes),
+                       self.setup.range_mode_id)
+            logger.info("    Aperture: %s (ID=%d)", 
+                       get_name(self.setup.aperture_id, self.configuration.apertures),
+                       self.setup.aperture_id)
+            logger.info("="*60)
+            
+            # 설정 업로드
             self.upload_setup()
-            # M 명령은 센서가 측정을 마칠 때까지 시간이 걸릴 수 있음
+            
+            # M 명령 타임아웃: C++ SDK 참조 (최대 30초)
+            # 자동 노출 모드에서는 최대 30초까지 소요 가능
+            logger.info("[CR Sensor] Sending M command (measuring, may take up to 30s)...")
+            start_time = time.time()
+            
             self._send_and_parse("M", timeout=30.0)
+            
+            elapsed = time.time() - start_time
+            logger.info("[CR Sensor] M command completed in %.1f seconds", elapsed)
+            logger.info("="*60)
+            
             return True
         except Exception as e:
             logger.error("[CR Sensor] Capture error: %s", e)
@@ -990,108 +1195,271 @@ class CRColorimeterSensor(SensorInterface):
     def download_reading(self) -> CRReading:
         """
         최근 측정 결과를 센서에서 다운로드합니다 (RM 명령 세트).
+        선택적 읽기: 일부 명령이 실패해도 필수 데이터(XYZ)는 읽기 시도
+        
+        Note: C++ SDK 참조 - 각 RM 명령마다 타임아웃 설정
+        측정 데이터 읽기는 일반 명령보다 시간이 걸릴 수 있음
         """
         reading = CRReading()
+        
+        # RM 명령 타임아웃: 데이터 읽기이므로 여유있게 설정
+        rm_timeout = 10.0  # C++ SDK에서는 기본 타임아웃 사용
+        
+        logger.info("="*60)
+        logger.info("[CR Sensor] DOWNLOAD READING START")
+        logger.info("="*60)
+        
+        # 필수 CIE 데이터를 먼저 시도 (XYZ가 가장 중요)
         try:
-            # 기본 정보
-            reading.id               = self._send_and_get_result("RM ID")
-            reading.model            = self._send_and_get_result("RM Model")
-            reading.time             = self._send_and_get_result("RM Time")
-            reading.accessory        = self._send_and_get_result("RM Accessory")
-            reading.filter           = self._send_and_get_result("RM Filter")
-            reading.aperture         = self._send_and_get_result("RM Aperture")
-            reading.mode             = self._send_and_get_result("RM Mode")
-            reading.exposure_mode    = self._send_and_get_result("RM ExposureMode")
-            reading.exposure         = self._send_and_get_result("RM Exposure")
+            cie2 = reading.cie[CRObserver.DEGREE_2]
+            
+            logger.info("[CR Sensor] Reading XYZ data...")
+            x_str = self._send_and_get_result("RM X", timeout=rm_timeout)
+            y_str = self._send_and_get_result("RM Y", timeout=rm_timeout)
+            z_str = self._send_and_get_result("RM Z", timeout=rm_timeout)
+            
+            logger.info("[CR Sensor] Raw XYZ strings: X='%s', Y='%s', Z='%s'", 
+                       x_str, y_str, z_str)
+            
+            # 빈 문자열 체크
+            if not x_str or not y_str or not z_str:
+                logger.error("[CR Sensor] Critical: XYZ data is EMPTY!")
+                logger.error("  Possible causes:")
+                logger.error("    1. M command didn't complete measurement")
+                logger.error("    2. Sensor not detecting light")
+                logger.error("    3. Communication timeout")
+                logger.error("  Check: Sensor pointing at bright surface?")
+                self.last_reading = reading
+                return reading
+            
+            # float 변환
+            try:
+                cie2.X = x_str
+                cie2.Y = y_str
+                cie2.Z = z_str
+                logger.info("[CR Sensor] XYZ data retrieved: X=%.4f Y=%.4f Z=%.4f",
+                           float(cie2.X), float(cie2.Y), float(cie2.Z))
+            except ValueError as ve:
+                logger.error("[CR Sensor] Critical: Cannot convert XYZ to float: %s", ve)
+                logger.error("  X='%s', Y='%s', Z='%s'", x_str, y_str, z_str)
+                self.last_reading = reading
+                return reading
+                
+        except Exception as e:
+            logger.error("[CR Sensor] Critical: Failed to read XYZ data: %s", e)
+            self.last_reading = reading
+            return reading
+        
+        # 선택적 필드들 - 개별 try-except로 보호
+        try:
+            reading.id = self._send_and_get_result("RM ID")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM ID not available: %s", e)
+            reading.id = "N/A"
+        
+        try:
+            reading.model = self._send_and_get_result("RM Model")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM Model not available: %s", e)
+            reading.model = "Unknown"
+        
+        try:
+            reading.time = self._send_and_get_result("RM Time")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM Time not available: %s", e)
+            reading.time = str(time.time())
+        
+        try:
+            reading.accessory = self._send_and_get_result("RM Accessory")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM Accessory not available: %s", e)
+            reading.accessory = "N/A"
+        
+        try:
+            reading.filter = self._send_and_get_result("RM Filter")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM Filter not available: %s", e)
+            reading.filter = "N/A"
+        
+        try:
+            reading.aperture = self._send_and_get_result("RM Aperture")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM Aperture not available: %s", e)
+            reading.aperture = "N/A"
+        
+        try:
+            reading.mode = self._send_and_get_result("RM Mode")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM Mode not available: %s (limited sensor)", e)
+            reading.mode = "Colorimeter"
+        try:
+            reading.mode = self._send_and_get_result("RM Mode")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM Mode not available: %s (limited sensor)", e)
+            reading.mode = "Colorimeter"
+        
+        try:
+            reading.exposure_mode = self._send_and_get_result("RM ExposureMode")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM ExposureMode not available: %s", e)
+            reading.exposure_mode = "Auto"
+        
+        try:
+            reading.exposure = self._send_and_get_result("RM Exposure")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM Exposure not available: %s", e)
+            reading.exposure = "N/A"
+        
+        try:
             reading.max_auto_exposure = self._send_and_get_result("RM MaxAutoExposure")
-            reading.range_mode       = self._send_and_get_result("RM RangeMode")
-            reading.range            = self._send_and_get_result("RM Range")
-            reading.speed            = self._send_and_get_result("RM Speed")
-            reading.sync_mode        = self._send_and_get_result("RM SyncMode")
-            reading.sync_freq        = self._send_and_get_result("RM SyncFreq")
-            reading.exposure_x       = self._send_and_get_result("RM ExposureX")
-            reading.user_calib_mode  = self._send_and_get_result("RM UserCalibMode")
-
-            # Matrix / Match  ("None" or int)
+        except Exception as e:
+            logger.debug("[CR Sensor] RM MaxAutoExposure not available: %s", e)
+            reading.max_auto_exposure = "N/A"
+        
+        try:
+            reading.range_mode = self._send_and_get_result("RM RangeMode")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM RangeMode not available: %s", e)
+            reading.range_mode = "Auto"
+        
+        try:
+            reading.range = self._send_and_get_result("RM Range")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM Range not available: %s", e)
+            reading.range = "N/A"
+        
+        try:
+            reading.speed = self._send_and_get_result("RM Speed")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM Speed not available: %s", e)
+            reading.speed = "Normal"
+        
+        try:
+            reading.sync_mode = self._send_and_get_result("RM SyncMode")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM SyncMode not available: %s", e)
+            reading.sync_mode = "None"
+        
+        try:
+            reading.sync_freq = self._send_and_get_result("RM SyncFreq")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM SyncFreq not available: %s", e)
+            reading.sync_freq = "N/A"
+        
+        try:
+            reading.exposure_x = self._send_and_get_result("RM ExposureX")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM ExposureX not available: %s", e)
+            reading.exposure_x = "N/A"
+        
+        try:
+            reading.user_calib_mode = self._send_and_get_result("RM UserCalibMode")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM UserCalibMode not available: %s", e)
+            reading.user_calib_mode = "N/A"
+        
+        # Matrix / Match
+        try:
             r = self._send_and_get_result("RM Matrix")
             reading.matrix_id = "-1" if r == "None" else r
+        except Exception as e:
+            logger.debug("[CR Sensor] RM Matrix not available: %s", e)
+            reading.matrix_id = "-1"
+        
+        try:
             r = self._send_and_get_result("RM Match")
             reading.match_id = "-1" if r == "None" else r
-
-            reading.cmf = self._send_and_get_result("RM CMF")
-
-            # CIE 2° Observer
-            cie2 = reading.cie[CRObserver.DEGREE_2]
-            cie2.X    = self._send_and_get_result("RM X")
-            cie2.Y    = self._send_and_get_result("RM Y")
-            cie2.Z    = self._send_and_get_result("RM Z")
-            cie2.XYZ  = self._send_and_get_result("RM XYZ")
-            cie2.xy   = self._send_and_get_result("RM xy")
-            cie2.uv   = self._send_and_get_result("RM uv")
-            cie2.upvp = self._send_and_get_result("RM upvp")
-            cie2.CCT  = self._send_and_get_result("RM CCT")
-
-            # CIE 10° Observer
-            cie10 = reading.cie[CRObserver.DEGREE_10]
-            cie10.X   = self._send_and_get_result("RM X10")
-            cie10.Y   = self._send_and_get_result("RM Y10")
-            cie10.Z   = self._send_and_get_result("RM Z10")
-            cie10.XYZ = self._send_and_get_result("RM XYZ10")
-            cie10.xy  = self._send_and_get_result("RM xy10")
-
-            # Warnings
-            try:
-                count, items = self._send_and_get_list("RM Warnings")
-                for item in items:
-                    parts = item.split("),")
-                    if len(parts) >= 2:
-                        reading.warnings.append(
-                            CRWarning(code=int(parts[0]), description=parts[1]))
-                        reading.all_warnings += item + "\r"
-            except Exception:
-                pass
-
-            # Spectrum
-            try:
-                parsed = self._send_and_parse("RM Spectrum")
-                result = parsed.get('result', '')
-                sp = result.split("),")
-                if len(sp) >= 4:
-                    reading.spectrum.starting_wavelength = float(sp[0])
-                    reading.spectrum.ending_wavelength   = float(sp[1])
-                    reading.spectrum.delta               = float(sp[2])
-                    n = int(sp[3])
-                    data_lines = self._read_multi_line_response(n)
-                    reading.spectrum.data = [float(x.strip()) for x in data_lines]
-            except Exception as e:
-                logger.debug("[CR Sensor] Spectrum read error: %s", e)
-
-            time.sleep(0.15)  # SDK 호환 대기
-
-            # Radiometric, Yv
-            reading.radiometric = self._send_and_get_result("RM Radiometric")
-            reading.yv          = self._send_and_get_result("RM Yv")
-
-            time.sleep(0.15)
-
-            # Temporal
-            try:
-                cmd = ("RM TemporalY"
-                       if self._firmware_version_number() >= 1.19
-                       else "RM Temporal")
-                parsed = self._send_and_parse(cmd)
-                result = parsed.get('result', '')
-                tp = result.split("),")
-                if len(tp) >= 2:
-                    reading.temporal.sampling_rate = float(tp[0])
-                    n = int(tp[1])
-                    data_lines = self._read_multi_line_response(n)
-                    reading.temporal.data = [float(x.strip()) for x in data_lines]
-            except Exception as e:
-                logger.debug("[CR Sensor] Temporal read error: %s", e)
-
         except Exception as e:
-            logger.error("[CR Sensor] Download reading error: %s", e)
+            logger.debug("[CR Sensor] RM Match not available: %s", e)
+            reading.match_id = "-1"
+        
+        try:
+            reading.cmf = self._send_and_get_result("RM CMF")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM CMF not available: %s", e)
+            reading.cmf = "N/A"
+        
+        # CIE 2° Observer 추가 데이터
+        try:
+            cie2 = reading.cie[CRObserver.DEGREE_2]
+            cie2.XYZ = self._send_and_get_result("RM XYZ")
+            cie2.xy = self._send_and_get_result("RM xy")
+            cie2.uv = self._send_and_get_result("RM uv")
+            cie2.upvp = self._send_and_get_result("RM upvp")
+            cie2.CCT = self._send_and_get_result("RM CCT")
+        except Exception as e:
+            logger.debug("[CR Sensor] Extended CIE data not available: %s", e)
+        
+        # CIE 10° Observer (선택적)
+        try:
+            cie10 = reading.cie[CRObserver.DEGREE_10]
+            cie10.X = self._send_and_get_result("RM X10")
+            cie10.Y = self._send_and_get_result("RM Y10")
+            cie10.Z = self._send_and_get_result("RM Z10")
+            cie10.XYZ = self._send_and_get_result("RM XYZ10")
+            cie10.xy = self._send_and_get_result("RM xy10")
+        except Exception as e:
+            logger.debug("[CR Sensor] CIE 10° data not available: %s", e)
+        
+        # Warnings (선택적)
+        try:
+            count, items = self._send_and_get_list("RM Warnings")
+            for item in items:
+                parts = self._split_list_item(item)
+                if len(parts) >= 2:
+                    reading.warnings.append(
+                        CRWarning(code=int(parts[0]), description=parts[1]))
+                    reading.all_warnings += item + "\r"
+        except Exception as e:
+            logger.debug("[CR Sensor] Warnings not available: %s", e)
+        
+        # Spectrum (선택적)
+        try:
+            parsed = self._send_and_parse("RM Spectrum")
+            result = parsed.get('result', '')
+            sp = result.split("),")
+            if len(sp) >= 4:
+                reading.spectrum.starting_wavelength = float(sp[0])
+                reading.spectrum.ending_wavelength = float(sp[1])
+                reading.spectrum.delta = float(sp[2])
+                n = int(sp[3])
+                data_lines = self._read_multi_line_response(n)
+                reading.spectrum.data = [float(x.strip()) for x in data_lines]
+        except Exception as e:
+            logger.debug("[CR Sensor] Spectrum not available: %s", e)
+        
+        time.sleep(0.15)  # SDK 호환 대기
+        
+        # Radiometric, Yv (선택적)
+        try:
+            reading.radiometric = self._send_and_get_result("RM Radiometric")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM Radiometric not available: %s", e)
+            reading.radiometric = "N/A"
+        
+        try:
+            reading.yv = self._send_and_get_result("RM Yv")
+        except Exception as e:
+            logger.debug("[CR Sensor] RM Yv not available: %s", e)
+            reading.yv = "N/A"
+        
+        time.sleep(0.15)
+        
+        # Temporal (선택적)
+        try:
+            cmd = ("RM TemporalY"
+                   if self._firmware_version_number() >= 1.19
+                   else "RM Temporal")
+            parsed = self._send_and_parse(cmd)
+            result = parsed.get('result', '')
+            tp = result.split("),")
+            if len(tp) >= 2:
+                reading.temporal.sampling_rate = float(tp[0])
+                n = int(tp[1])
+                data_lines = self._read_multi_line_response(n)
+                reading.temporal.data = [float(x.strip()) for x in data_lines]
+        except Exception as e:
+            logger.debug("[CR Sensor] Temporal data not available: %s", e)
 
         self.last_reading = reading
         return reading
@@ -1334,17 +1702,27 @@ class CRColorimeterSensor(SensorInterface):
 
     @staticmethod
     def _xyz_to_rgb(xyz: np.ndarray) -> np.ndarray:
-        """XYZ → sRGB 변환 (BT.709 역행렬 + sRGB gamma)"""
+        """측정 XYZ → 표시용 sRGB 스와치 색 (BT.709 역행렬 + sRGB gamma).
+
+        CR 센서의 XYZ 는 절대값(Y 가 cd/m², 예: 57.65)이라 그대로 역변환하면
+        선형 RGB 가 1 을 훌쩍 넘겨 전부 흰색으로 클립된다(주황을 재도 흰색).
+        스와치는 '무슨 색을 쟀나'를 보여주는 용도이므로, 선형 RGB 의 최댓값을
+        1 로 정규화해 절대 밝기는 버리고 색도(hue/sat)를 보존한 풀-밝기 색으로
+        렌더한다. (calibration 은 이 rgb 가 아니라 xyz/cie_xy/luminance 를 사용.)
+        """
         M_inv = np.array([
             [ 3.2404542, -1.5371385, -0.4985314],
             [-0.9692660,  1.8760108,  0.0415560],
             [ 0.0556434, -0.2040259,  1.0572252],
         ])
-        rgb_linear = M_inv @ xyz
+        rgb_linear = np.maximum(M_inv @ xyz, 0.0)   # 음수(색역 밖) 클램프
+        peak = float(np.max(rgb_linear))
+        if peak > 1.0:                               # 밝기 정규화 → 색도 보존
+            rgb_linear = rgb_linear / peak
         rgb = np.where(
             rgb_linear <= 0.0031308,
             12.92 * rgb_linear,
-            1.055 * np.power(np.maximum(rgb_linear, 0), 1.0 / 2.4) - 0.055,
+            1.055 * np.power(rgb_linear, 1.0 / 2.4) - 0.055,
         )
         return np.clip(rgb, 0, 1)
 
@@ -1433,15 +1811,62 @@ class CRColorimeterSensor(SensorInterface):
 class VirtualSensor(SensorInterface):
     """
     가상 센서 (시뮬레이션용)
-    랜덤한 RGB 값을 생성하여 실제 센서 동작을 시뮬레이션
+    실제 센서 동작을 시뮬레이션하되, Grayscale 정확도 개선
+    
+    개선 사항:
+      - 마지막 측정 패턴 기억 (pattern_hint)
+      - Grayscale 패턴 시 R≈G≈B (편차 < 0.05)
+      - Color 패턴 시 랜덤 노이즈 추가
+    
+    INFERENCE: VirtualSensor는 넓은 색역 디스플레이(BT.2020)를 시뮬레이션합니다.
+    이는 모든 타겟 색공간(BT.709, DCI-P3, BT.2020)을 포함할 수 있어
+    캘리브레이션 로직 테스트에 적합합니다.
+    약간의 오차(노이즈)를 추가하여 실제 디스플레이의 불완전성을 반영합니다.
     """
 
-    def __init__(self, noise_level: float = 0.02):
+    def __init__(self, noise_level: float = 0.02, display_colorspace: str = 'BT.2020',
+                 max_luminance: float = 100.0, black_level: float = 0.05,
+                 native_gamma: float = 2.2):
         self.connected = False
         self.noise_level = noise_level
         self.measurement_count = 0
-        print("[Virtual Sensor] Initialized (Noise Level: {:.1f}%)"
-              .format(noise_level * 100))
+        self.last_pattern_rgb = None  # 마지막 측정 요청 패턴
+        self.display_colorspace = display_colorspace
+
+        # 디스플레이 고정 특성 (매 측정마다 달라지지 않음)
+        # VirtualSensor가 일관된 응답을 주어야 iterative calibration이 수렴함
+        self.max_luminance = max_luminance   # 최대 휘도 (cd/m²) — 고정
+        self.black_level = black_level       # 블랙 레벨 (cd/m²) — 고정
+        self.native_gamma = native_gamma     # 디스플레이 네이티브 EOTF 감마
+
+        # 디스플레이 원색 행렬 설정 (RGB → XYZ)
+        if display_colorspace == 'BT.2020':
+            # ITU-R BT.2020 primaries (wide gamut)
+            self.rgb_to_xyz_matrix = np.array([
+                [0.6370, 0.1446, 0.1689],
+                [0.2627, 0.6780, 0.0593],
+                [0.0000, 0.0281, 1.0610],
+            ])
+        elif display_colorspace == 'DCI-P3':
+            # DCI-P3 primaries
+            self.rgb_to_xyz_matrix = np.array([
+                [0.4865, 0.2657, 0.1982],
+                [0.2290, 0.6917, 0.0793],
+                [0.0000, 0.0451, 1.0439],
+            ])
+        else:  # 'sRGB' or 'BT.709'
+            # sRGB / BT.709 primaries
+            self.rgb_to_xyz_matrix = np.array([
+                [0.4124564, 0.3575761, 0.1804375],
+                [0.2126729, 0.7151522, 0.0721750],
+                [0.0193339, 0.1191920, 0.9503041],
+            ])
+
+        print("[Virtual Sensor] Initialized "
+              "(Noise: {:.1f}%, CS: {}, Lw: {:.1f} cd/m², "
+              "Lb: {:.3f} cd/m², gamma: {:.2f})"
+              .format(noise_level * 100, display_colorspace,
+                      self.max_luminance, self.black_level, self.native_gamma))
 
     def connect(self) -> bool:
         print("[Virtual Sensor] Connecting...")
@@ -1458,22 +1883,55 @@ class VirtualSensor(SensorInterface):
 
     def is_connected(self) -> bool:
         return self.connected
+    
+    def set_pattern_hint(self, rgb: Tuple[float, float, float]):
+        """다음 측정할 패턴 힌트 설정 (정확도 개선용)"""
+        self.last_pattern_rgb = rgb
 
     # ---- internal helpers ----
 
-    def _generate_random_rgb(self) -> np.ndarray:
-        rgb = np.random.random(3)
-        noise = np.random.normal(0, self.noise_level, 3)
-        return np.clip(rgb + noise, 0, 1)
+    def _generate_realistic_rgb(self, pattern_rgb: Optional[Tuple[float, float, float]] = None) -> np.ndarray:
+        """
+        현실적인 RGB 값 생성
+        
+        Grayscale (R=G=B) 패턴의 경우:
+          - 실제 측정값도 R≈G≈B (편차 < 0.05)
+          - 약간의 노이즈만 추가
+        
+        Color 패턴의 경우:
+          - 패턴 중심으로 노이즈 추가
+        """
+        if pattern_rgb is not None:
+            r, g, b = pattern_rgb
+            # Grayscale 패턴 감지 (R=G=B)
+            if abs(r - g) < 0.01 and abs(g - b) < 0.01:
+                # Grayscale: R≈G≈B 유지하되 약간의 노이즈
+                gray_level = (r + g + b) / 3.0
+                noise = np.random.normal(0, self.noise_level * 0.5, 3)
+                rgb = np.array([gray_level, gray_level, gray_level]) + noise
+                return np.clip(rgb, 0, 1)
+            else:
+                # Color: 패턴 중심으로 노이즈 추가
+                noise = np.random.normal(0, self.noise_level, 3)
+                rgb = np.array([r, g, b]) + noise
+                return np.clip(rgb, 0, 1)
+        else:
+            # 패턴 힌트 없으면 랜덤 생성
+            rgb = np.random.random(3)
+            noise = np.random.normal(0, self.noise_level, 3)
+            return np.clip(rgb + noise, 0, 1)
 
-    @staticmethod
-    def _rgb_to_xyz(rgb: np.ndarray) -> np.ndarray:
-        M = np.array([
-            [0.4124564, 0.3575761, 0.1804375],
-            [0.2126729, 0.7151522, 0.0721750],
-            [0.0193339, 0.1191920, 0.9503041],
-        ])
-        return M @ np.power(rgb, 2.2)
+    def _rgb_to_xyz(self, rgb: np.ndarray) -> np.ndarray:
+        """
+        RGB → XYZ 변환 (디스플레이 색공간 기준)
+
+        네이티브 감마(power-law EOTF) 적용 후 원색 행렬 적용.
+        실제 디스플레이의 EOTF 시뮬레이션:
+          L_linear = code ^ native_gamma
+          XYZ = M_display @ L_linear
+        """
+        linear = np.power(np.clip(rgb, 0.0, 1.0), self.native_gamma)
+        return self.rgb_to_xyz_matrix @ linear
 
     @staticmethod
     def _xyz_to_xy(xyz: np.ndarray) -> Tuple[float, float]:
@@ -1495,27 +1953,44 @@ class VirtualSensor(SensorInterface):
 
         print("[Virtual Sensor] Reading... (Measurement #{})"
               .format(self.measurement_count + 1))
-        time.sleep(0.2)
+        time.sleep(0.05)  # 실제 센서 응답 시간 시뮬
 
-        measured_rgb = self._generate_random_rgb()
-        xyz = self._rgb_to_xyz(measured_rgb)
-        cie_xy = self._xyz_to_xy(xyz)
-        luminance = xyz[1] * np.random.uniform(80, 120)
+        # 패턴 힌트 사용하여 현실적인 RGB 생성
+        measured_rgb = self._generate_realistic_rgb(self.last_pattern_rgb)
+        xyz_normalized = self._rgb_to_xyz(measured_rgb)
+        cie_xy = self._xyz_to_xy(xyz_normalized)
+
+        # 절대 휘도 스케일링 — 고정된 디스플레이 특성 사용
+        # VirtualSensor 예: Lw=100 cd/m², Lb=0.05 cd/m²
+        # relative_Y=0 → Lb, relative_Y=1 → Lw
+        relative_luminance = float(np.clip(xyz_normalized[1], 0.0, 1.0))
+        luminance = (self.black_level
+                     + (self.max_luminance - self.black_level) * relative_luminance)
+
+        # XYZ를 절대 휘도 기반으로 스케일링
+        if xyz_normalized[1] > 1e-10:
+            scale_factor = luminance / xyz_normalized[1]
+        else:
+            # 완전한 블랙 (R=G=B=0)
+            scale_factor = self.black_level
+        xyz = xyz_normalized * scale_factor
 
         self.measurement_count += 1
 
-        print("[Virtual Sensor] RGB: R={:.3f}, G={:.3f}, B={:.3f}"
-              .format(*measured_rgb))
-        print("[Virtual Sensor] CIE xy: x={:.4f}, y={:.4f}"
-              .format(*cie_xy))
-        print("[Virtual Sensor] Luminance: {:.2f} cd/m²"
-              .format(luminance))
+        print("[Virtual Sensor] hint_rgb={} → "
+              "measured_rgb=({:.3f},{:.3f},{:.3f}) "
+              "Y={:.2f} cd/m²"
+              .format(
+                  tuple(round(v, 3) for v in self.last_pattern_rgb)
+                  if self.last_pattern_rgb is not None else None,
+                  *measured_rgb, luminance))
 
         return SensorReading(
             rgb=measured_rgb, xyz=xyz, cie_xy=cie_xy,
             luminance=luminance,
             timestamp=time.time(),
             is_valid=True, error_message="")
+
 
     def get_measurement_count(self) -> int:
         return self.measurement_count
@@ -1586,7 +2061,7 @@ if __name__ == "__main__":
             print("  RGB: [{:.4f}, {:.4f}, {:.4f}]".format(*reading.rgb))
             print("  XYZ: [{:.4f}, {:.4f}, {:.4f}]".format(*reading.xyz))
             print("  CIE xy: ({:.4f}, {:.4f})".format(*reading.cie_xy))
-            print("  Luminance: {:.2f} cd/m²".format(reading.luminance))
+            print("  Luminance: {:.2f} cd/m^2".format(reading.luminance))
         print("-" * 60)
 
     print("\nTotal measurements:", sensor.get_measurement_count())
